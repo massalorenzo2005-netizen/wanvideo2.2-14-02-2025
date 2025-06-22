@@ -3507,56 +3507,146 @@ class WanVideoSampler:
         except:
             pass
 
-        #region main loop start
-        for idx, t in enumerate(tqdm(timesteps)):    
-            if flowedit_args is not None:
-                if idx < skip_steps:
-                    continue
-
-            # diff diff
-            if masks is not None:
-                if idx < len(timesteps) - 1:
-                    noise_timestep = timesteps[idx+1]
-                    image_latent = sample_scheduler.scale_noise(
-                        original_image, torch.tensor([noise_timestep]), noise.to(device)
-                    )
-                    mask = masks[idx]
-                    mask = mask.to(latent)
-                    latent = image_latent * mask + latent * (1-mask)
-                    # end diff diff
-
-            latent_model_input = latent.to(device)
-
-            timestep = torch.tensor([t]).to(device)
-            current_step_percentage = idx / len(timesteps)
-
-            ### latent shift
-            if latent_shift_loop:
-                if latent_shift_start_percent <= current_step_percentage <= latent_shift_end_percent:
-                    latent_model_input = torch.cat([latent_model_input[:, shift_idx:]] + [latent_model_input[:, :shift_idx]], dim=1)
-
-            #enhance-a-video
-            if feta_args is not None and feta_start_percent <= current_step_percentage <= feta_end_percent:
-                enable_enhance()
-            else:
-                disable_enhance()
-
-            #flow-edit
-            if flowedit_args is not None:
-                sigma = t / 1000.0
-                sigma_prev = (timesteps[idx + 1] if idx < len(timesteps) - 1 else timesteps[-1]) / 1000.0
-                noise = torch.randn(x_init.shape, generator=seed_g, device=torch.device("cpu"))
-                if idx < len(timesteps) - drift_steps:
-                    cfg = drift_cfg
+        # Main sampling loop with FreeInit iterations
+        iterations = freeinit_args.get("freeinit_num_iters", 3) if freeinit_args is not None else 1
+        current_latent = latent
+        
+        for iter_idx in range(iterations):
+            # FreeInit noise reinitialization (after first iteration)
+            if freeinit_args is not None and iter_idx > 0:
+                # Diffuse current latent to t=999
+                diffuse_timesteps = torch.full((noise.shape[0],), 999, device=device, dtype=torch.long)
+                z_T = sample_scheduler.add_noise(
+                    current_latent.to(device),
+                    initial_noise_saved.to(device),
+                    diffuse_timesteps
+                )
                 
-                zt_src = (1-sigma) * x_init + sigma * noise.to(t)
-                zt_tgt = x_tgt + zt_src - x_init
+                # Generate new random noise
+                z_rand = torch.randn_like(z_T)
+                
+                # Apply frequency mixing
+                current_latent = freq_mix_3d(z_T.to(torch.float32), z_rand, LPF=freq_filter)
+                current_latent = current_latent.to(dtype)
+            
+            # Store initial noise for first iteration
+            if iter_idx == 0:
+                initial_noise_saved = current_latent.detach().clone()
+            
+            # Reset per-iteration states
+            self.cache_state = [None, None]
+            self.cache_state_source = [None, None]
+            self.cache_states_context = []
+            if context_options is not None:
+                self.window_tracker = WindowTracker(verbose=context_options["verbose"])
+            
+            # Set latent for denoising
+            latent = current_latent
 
-                #source
-                if idx < len(timesteps) - drift_steps:
+            #region main loop start
+            for idx, t in enumerate(tqdm(timesteps)):    
+                if flowedit_args is not None:
+                    if idx < skip_steps:
+                        continue
+
+                # diff diff
+                if masks is not None:
+                    if idx < len(timesteps) - 1:
+                        noise_timestep = timesteps[idx+1]
+                        image_latent = sample_scheduler.scale_noise(
+                            original_image, torch.tensor([noise_timestep]), noise.to(device)
+                        )
+                        mask = masks[idx]
+                        mask = mask.to(latent)
+                        latent = image_latent * mask + latent * (1-mask)
+                        # end diff diff
+
+                latent_model_input = latent.to(device)
+
+                timestep = torch.tensor([t]).to(device)
+                current_step_percentage = idx / len(timesteps)
+
+                ### latent shift
+                if latent_shift_loop:
+                    if latent_shift_start_percent <= current_step_percentage <= latent_shift_end_percent:
+                        latent_model_input = torch.cat([latent_model_input[:, shift_idx:]] + [latent_model_input[:, :shift_idx]], dim=1)
+
+                #enhance-a-video
+                if feta_args is not None and feta_start_percent <= current_step_percentage <= feta_end_percent:
+                    enable_enhance()
+                else:
+                    disable_enhance()
+
+                #flow-edit
+                if flowedit_args is not None:
+                    sigma = t / 1000.0
+                    sigma_prev = (timesteps[idx + 1] if idx < len(timesteps) - 1 else timesteps[-1]) / 1000.0
+                    noise = torch.randn(x_init.shape, generator=seed_g, device=torch.device("cpu"))
+                    if idx < len(timesteps) - drift_steps:
+                        cfg = drift_cfg
+                    
+                    zt_src = (1-sigma) * x_init + sigma * noise.to(t)
+                    zt_tgt = x_tgt + zt_src - x_init
+
+                    #source
+                    if idx < len(timesteps) - drift_steps:
+                        if context_options is not None:
+                            counter = torch.zeros_like(zt_src, device=intermediate_device)
+                            vt_src = torch.zeros_like(zt_src, device=intermediate_device)
+                            context_queue = list(context(idx, steps, latent_video_length, context_frames, context_stride, context_overlap))
+                            for c in context_queue:
+                                window_id = self.window_tracker.get_window_id(c)
+
+                                if cache_args is not None:
+                                    current_teacache = self.window_tracker.get_teacache(window_id, self.cache_state)
+                                else:
+                                    current_teacache = None
+
+                                prompt_index = min(int(max(c) / section_size), num_prompts - 1)
+                                if context_options["verbose"]:
+                                    log.info(f"Prompt index: {prompt_index}")
+
+                                if len(source_embeds["prompt_embeds"]) > 1:
+                                    positive = source_embeds["prompt_embeds"][prompt_index]
+                                else:
+                                    positive = source_embeds["prompt_embeds"]
+
+                                partial_img_emb = None
+                                if source_image_cond is not None:
+                                    partial_img_emb = source_image_cond[:, c, :, :]
+                                    partial_img_emb[:, 0, :, :] = source_image_cond[:, 0, :, :].to(intermediate_device)
+
+                                partial_zt_src = zt_src[:, c, :, :]
+                                vt_src_context, new_teacache = predict_with_cfg(
+                                    partial_zt_src, cfg[idx], 
+                                    positive, source_embeds["negative_prompt_embeds"],
+                                    timestep, idx, partial_img_emb, control_latents,
+                                    source_clip_fea, current_teacache)
+                                
+                                if cache_args is not None:
+                                    self.window_tracker.cache_states[window_id] = new_teacache
+
+                                window_mask = create_window_mask(vt_src_context, c, latent_video_length, context_overlap)
+                                vt_src[:, c, :, :] += vt_src_context * window_mask
+                                counter[:, c, :, :] += window_mask
+                            vt_src /= counter
+                        else:
+                            vt_src, self.cache_state_source = predict_with_cfg(
+                                zt_src, cfg[idx], 
+                                source_embeds["prompt_embeds"], 
+                                source_embeds["negative_prompt_embeds"],
+                                timestep, idx, source_image_cond, 
+                                source_clip_fea, control_latents,
+                                cache_state=self.cache_state_source)
+                    else:
+                        if idx == len(timesteps) - drift_steps:
+                            x_tgt = zt_tgt
+                        zt_tgt = x_tgt
+                        vt_src = 0
+                    #target
                     if context_options is not None:
-                        counter = torch.zeros_like(zt_src, device=intermediate_device)
-                        vt_src = torch.zeros_like(zt_src, device=intermediate_device)
+                        counter = torch.zeros_like(zt_tgt, device=intermediate_device)
+                        vt_tgt = torch.zeros_like(zt_tgt, device=intermediate_device)
                         context_queue = list(context(idx, steps, latent_video_length, context_frames, context_stride, context_overlap))
                         for c in context_queue:
                             window_id = self.window_tracker.get_window_id(c)
@@ -3569,52 +3659,55 @@ class WanVideoSampler:
                             prompt_index = min(int(max(c) / section_size), num_prompts - 1)
                             if context_options["verbose"]:
                                 log.info(f"Prompt index: {prompt_index}")
-
-                            if len(source_embeds["prompt_embeds"]) > 1:
-                                positive = source_embeds["prompt_embeds"][prompt_index]
+                        
+                            if len(text_embeds["prompt_embeds"]) > 1:
+                                positive = text_embeds["prompt_embeds"][prompt_index]
                             else:
-                                positive = source_embeds["prompt_embeds"]
-
+                                positive = text_embeds["prompt_embeds"]
+                            
                             partial_img_emb = None
-                            if source_image_cond is not None:
-                                partial_img_emb = source_image_cond[:, c, :, :]
-                                partial_img_emb[:, 0, :, :] = source_image_cond[:, 0, :, :].to(intermediate_device)
+                            partial_control_latents = None
+                            if image_cond is not None:
+                                partial_img_emb = image_cond[:, c, :, :]
+                                partial_img_emb[:, 0, :, :] = image_cond[:, 0, :, :].to(intermediate_device)
+                            if control_latents is not None:
+                                partial_control_latents = control_latents[:, c, :, :]
 
-                            partial_zt_src = zt_src[:, c, :, :]
-                            vt_src_context, new_teacache = predict_with_cfg(
-                                partial_zt_src, cfg[idx], 
-                                positive, source_embeds["negative_prompt_embeds"],
-                                timestep, idx, partial_img_emb, control_latents,
-                                source_clip_fea, current_teacache)
+                            partial_zt_tgt = zt_tgt[:, c, :, :]
+                            vt_tgt_context, new_teacache = predict_with_cfg(
+                                partial_zt_tgt, cfg[idx], 
+                                positive, text_embeds["negative_prompt_embeds"],
+                                timestep, idx, partial_img_emb, partial_control_latents,
+                                clip_fea, current_teacache)
                             
                             if cache_args is not None:
                                 self.window_tracker.cache_states[window_id] = new_teacache
-
-                            window_mask = create_window_mask(vt_src_context, c, latent_video_length, context_overlap)
-                            vt_src[:, c, :, :] += vt_src_context * window_mask
+                            
+                            window_mask = create_window_mask(vt_tgt_context, c, latent_video_length, context_overlap)
+                            vt_tgt[:, c, :, :] += vt_tgt_context * window_mask
                             counter[:, c, :, :] += window_mask
-                        vt_src /= counter
+                        vt_tgt /= counter
                     else:
-                        vt_src, self.cache_state_source = predict_with_cfg(
-                            zt_src, cfg[idx], 
-                            source_embeds["prompt_embeds"], 
-                            source_embeds["negative_prompt_embeds"],
-                            timestep, idx, source_image_cond, 
-                            source_clip_fea, control_latents,
-                            cache_state=self.cache_state_source)
-                else:
-                    if idx == len(timesteps) - drift_steps:
-                        x_tgt = zt_tgt
-                    zt_tgt = x_tgt
-                    vt_src = 0
-                #target
-                if context_options is not None:
-                    counter = torch.zeros_like(zt_tgt, device=intermediate_device)
-                    vt_tgt = torch.zeros_like(zt_tgt, device=intermediate_device)
+                        vt_tgt, self.cache_state = predict_with_cfg(
+                            zt_tgt, cfg[idx], 
+                            text_embeds["prompt_embeds"], 
+                            text_embeds["negative_prompt_embeds"], 
+                            timestep, idx, image_cond, clip_fea, control_latents,
+                            cache_state=self.cache_state)
+                    v_delta = vt_tgt - vt_src
+                    x_tgt = x_tgt.to(torch.float32)
+                    v_delta = v_delta.to(torch.float32)
+                    x_tgt = x_tgt + (sigma_prev - sigma) * v_delta
+                    x0 = x_tgt
+                #context windowing
+                elif context_options is not None:
+                    counter = torch.zeros_like(latent_model_input, device=intermediate_device)
+                    noise_pred = torch.zeros_like(latent_model_input, device=intermediate_device)
                     context_queue = list(context(idx, steps, latent_video_length, context_frames, context_stride, context_overlap))
+                    
                     for c in context_queue:
                         window_id = self.window_tracker.get_window_id(c)
-
+                        
                         if cache_args is not None:
                             current_teacache = self.window_tracker.get_teacache(window_id, self.cache_state)
                         else:
@@ -3623,188 +3716,134 @@ class WanVideoSampler:
                         prompt_index = min(int(max(c) / section_size), num_prompts - 1)
                         if context_options["verbose"]:
                             log.info(f"Prompt index: {prompt_index}")
-                     
+                        
+                        # Use the appropriate prompt for this section
                         if len(text_embeds["prompt_embeds"]) > 1:
                             positive = text_embeds["prompt_embeds"][prompt_index]
                         else:
                             positive = text_embeds["prompt_embeds"]
-                        
+
                         partial_img_emb = None
                         partial_control_latents = None
                         if image_cond is not None:
-                            partial_img_emb = image_cond[:, c, :, :]
-                            partial_img_emb[:, 0, :, :] = image_cond[:, 0, :, :].to(intermediate_device)
-                        if control_latents is not None:
-                            partial_control_latents = control_latents[:, c, :, :]
+                            partial_img_emb = image_cond[:, c]
+                            partial_img_emb[:, 0] = image_cond[:, 0].to(intermediate_device)
 
-                        partial_zt_tgt = zt_tgt[:, c, :, :]
-                        vt_tgt_context, new_teacache = predict_with_cfg(
-                            partial_zt_tgt, cfg[idx], 
-                            positive, text_embeds["negative_prompt_embeds"],
-                            timestep, idx, partial_img_emb, partial_control_latents,
-                            clip_fea, current_teacache)
+                            if control_latents is not None:
+                                partial_control_latents = control_latents[:, c]
                         
+                        partial_control_camera_latents = None
+                        if control_camera_latents is not None:
+                            partial_control_camera_latents = control_camera_latents[:, :, c]
+                        
+                        partial_vace_context = None
+                        if vace_data is not None:
+                            window_vace_data = []
+                            for vace_entry in vace_data:
+                                partial_context = vace_entry["context"][0][:, c]
+                                if has_ref:
+                                    partial_context[:, 0] = vace_entry["context"][0][:, 0]
+                                
+                                window_vace_data.append({
+                                    "context": [partial_context], 
+                                    "scale": vace_entry["scale"],
+                                    "start": vace_entry["start"], 
+                                    "end": vace_entry["end"],
+                                    "seq_len": vace_entry["seq_len"]
+                                })
+                            
+                            partial_vace_context = window_vace_data
+
+                        partial_audio_proj = None
+                        if fantasytalking_embeds is not None:
+                            partial_audio_proj = audio_proj[:, c]
+
+                        partial_latent_model_input = latent_model_input[:, c]
+
+                        partial_unianim_data = None
+                        if unianim_data is not None:
+                            partial_dwpose = dwpose_data[:, :, c]
+                            partial_dwpose_flat=rearrange(partial_dwpose, 'b c f h w -> b (f h w) c')
+                            partial_unianim_data = {
+                                "dwpose": partial_dwpose_flat,
+                                "random_ref": unianim_data["random_ref"],
+                                "strength": unianimate_poses["strength"],
+                                "start_percent": unianimate_poses["start_percent"],
+                                "end_percent": unianimate_poses["end_percent"]
+                            }
+                            
+                        partial_add_cond = None
+                        if add_cond is not None:
+                            partial_add_cond = add_cond[:, :, c].to(device, dtype)
+
+                        noise_pred_context, new_teacache = predict_with_cfg(
+                            partial_latent_model_input, 
+                            cfg[idx], positive, 
+                            text_embeds["negative_prompt_embeds"], 
+                            timestep, idx, partial_img_emb, clip_fea, partial_control_latents, partial_vace_context, partial_unianim_data,partial_audio_proj,
+                            partial_control_camera_latents, partial_add_cond,
+                            current_teacache)
+
                         if cache_args is not None:
                             self.window_tracker.cache_states[window_id] = new_teacache
-                        
-                        window_mask = create_window_mask(vt_tgt_context, c, latent_video_length, context_overlap)
-                        vt_tgt[:, c, :, :] += vt_tgt_context * window_mask
-                        counter[:, c, :, :] += window_mask
-                    vt_tgt /= counter
+
+                        window_mask = create_window_mask(noise_pred_context, c, latent_video_length, context_overlap, looped=is_looped)                    
+                        noise_pred[:, c] += noise_pred_context * window_mask
+                        counter[:, c] += window_mask
+                    noise_pred /= counter
+                #region normal inference
                 else:
-                    vt_tgt, self.cache_state = predict_with_cfg(
-                        zt_tgt, cfg[idx], 
+                    noise_pred, self.cache_state = predict_with_cfg(
+                        latent_model_input, 
+                        cfg[idx], 
                         text_embeds["prompt_embeds"], 
                         text_embeds["negative_prompt_embeds"], 
-                        timestep, idx, image_cond, clip_fea, control_latents,
+                        timestep, idx, image_cond, clip_fea, control_latents, vace_data, unianim_data, audio_proj, control_camera_latents, add_cond,
                         cache_state=self.cache_state)
-                v_delta = vt_tgt - vt_src
-                x_tgt = x_tgt.to(torch.float32)
-                v_delta = v_delta.to(torch.float32)
-                x_tgt = x_tgt + (sigma_prev - sigma) * v_delta
-                x0 = x_tgt
-            #context windowing
-            elif context_options is not None:
-                counter = torch.zeros_like(latent_model_input, device=intermediate_device)
-                noise_pred = torch.zeros_like(latent_model_input, device=intermediate_device)
-                context_queue = list(context(idx, steps, latent_video_length, context_frames, context_stride, context_overlap))
+
+                if latent_shift_loop:
+                    #reverse latent shift
+                    if latent_shift_start_percent <= current_step_percentage <= latent_shift_end_percent:
+                        noise_pred = torch.cat([noise_pred[:, latent_video_length - shift_idx:]] + [noise_pred[:, :latent_video_length - shift_idx]], dim=1)
+                        shift_idx = (shift_idx + latent_skip) % latent_video_length
+                    
                 
-                for c in context_queue:
-                    window_id = self.window_tracker.get_window_id(c)
-                    
-                    if cache_args is not None:
-                        current_teacache = self.window_tracker.get_teacache(window_id, self.cache_state)
+                if flowedit_args is None:
+                    latent = latent.to(intermediate_device)
+                    step_args = {
+                        "generator": seed_g,
+                    }
+                    if isinstance(sample_scheduler, DEISMultistepScheduler) or isinstance(sample_scheduler, FlowMatchScheduler):
+                        step_args.pop("generator", None)
+                    temp_x0 = sample_scheduler.step(
+                        noise_pred[:, :orig_noise_len].unsqueeze(0) if recammaster is not None else noise_pred.unsqueeze(0),
+                        t,
+                        latent[:, :orig_noise_len].unsqueeze(0) if recammaster is not None else latent.unsqueeze(0),
+                        #return_dict=False,
+                        **step_args)[0]
+                    latent = temp_x0.squeeze(0)
+
+                    x0 = latent.to(device)
+                    if callback is not None:
+                        if recammaster is not None:
+                            callback_latent = (latent_model_input[:, :orig_noise_len].to(device) - noise_pred[:, :orig_noise_len].to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
+                        elif phantom_latents is not None:
+                            callback_latent = (latent_model_input[:,:-phantom_latents.shape[1]].to(device) - noise_pred[:,:-phantom_latents.shape[1]].to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
+                        else:
+                            callback_latent = (latent_model_input.to(device) - noise_pred.to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
+                        callback(idx, callback_latent, None, steps)
                     else:
-                        current_teacache = None
-
-                    prompt_index = min(int(max(c) / section_size), num_prompts - 1)
-                    if context_options["verbose"]:
-                        log.info(f"Prompt index: {prompt_index}")
-                    
-                    # Use the appropriate prompt for this section
-                    if len(text_embeds["prompt_embeds"]) > 1:
-                        positive = text_embeds["prompt_embeds"][prompt_index]
-                    else:
-                        positive = text_embeds["prompt_embeds"]
-
-                    partial_img_emb = None
-                    partial_control_latents = None
-                    if image_cond is not None:
-                        partial_img_emb = image_cond[:, c]
-                        partial_img_emb[:, 0] = image_cond[:, 0].to(intermediate_device)
-
-                        if control_latents is not None:
-                            partial_control_latents = control_latents[:, c]
-                    
-                    partial_control_camera_latents = None
-                    if control_camera_latents is not None:
-                        partial_control_camera_latents = control_camera_latents[:, :, c]
-                    
-                    partial_vace_context = None
-                    if vace_data is not None:
-                        window_vace_data = []
-                        for vace_entry in vace_data:
-                            partial_context = vace_entry["context"][0][:, c]
-                            if has_ref:
-                                partial_context[:, 0] = vace_entry["context"][0][:, 0]
-                            
-                            window_vace_data.append({
-                                "context": [partial_context], 
-                                "scale": vace_entry["scale"],
-                                "start": vace_entry["start"], 
-                                "end": vace_entry["end"],
-                                "seq_len": vace_entry["seq_len"]
-                            })
-                        
-                        partial_vace_context = window_vace_data
-
-                    partial_audio_proj = None
-                    if fantasytalking_embeds is not None:
-                        partial_audio_proj = audio_proj[:, c]
-
-                    partial_latent_model_input = latent_model_input[:, c]
-
-                    partial_unianim_data = None
-                    if unianim_data is not None:
-                        partial_dwpose = dwpose_data[:, :, c]
-                        partial_dwpose_flat=rearrange(partial_dwpose, 'b c f h w -> b (f h w) c')
-                        partial_unianim_data = {
-                            "dwpose": partial_dwpose_flat,
-                            "random_ref": unianim_data["random_ref"],
-                            "strength": unianimate_poses["strength"],
-                            "start_percent": unianimate_poses["start_percent"],
-                            "end_percent": unianimate_poses["end_percent"]
-                        }
-                        
-                    partial_add_cond = None
-                    if add_cond is not None:
-                        partial_add_cond = add_cond[:, :, c].to(device, dtype)
-
-                    noise_pred_context, new_teacache = predict_with_cfg(
-                        partial_latent_model_input, 
-                        cfg[idx], positive, 
-                        text_embeds["negative_prompt_embeds"], 
-                        timestep, idx, partial_img_emb, clip_fea, partial_control_latents, partial_vace_context, partial_unianim_data,partial_audio_proj,
-                        partial_control_camera_latents, partial_add_cond,
-                        current_teacache)
-
-                    if cache_args is not None:
-                        self.window_tracker.cache_states[window_id] = new_teacache
-
-                    window_mask = create_window_mask(noise_pred_context, c, latent_video_length, context_overlap, looped=is_looped)                    
-                    noise_pred[:, c] += noise_pred_context * window_mask
-                    counter[:, c] += window_mask
-                noise_pred /= counter
-            #region normal inference
-            else:
-                noise_pred, self.cache_state = predict_with_cfg(
-                    latent_model_input, 
-                    cfg[idx], 
-                    text_embeds["prompt_embeds"], 
-                    text_embeds["negative_prompt_embeds"], 
-                    timestep, idx, image_cond, clip_fea, control_latents, vace_data, unianim_data, audio_proj, control_camera_latents, add_cond,
-                    cache_state=self.cache_state)
-
-            if latent_shift_loop:
-                #reverse latent shift
-                if latent_shift_start_percent <= current_step_percentage <= latent_shift_end_percent:
-                    noise_pred = torch.cat([noise_pred[:, latent_video_length - shift_idx:]] + [noise_pred[:, :latent_video_length - shift_idx]], dim=1)
-                    shift_idx = (shift_idx + latent_skip) % latent_video_length
-                
-            
-            if flowedit_args is None:
-                latent = latent.to(intermediate_device)
-                step_args = {
-                    "generator": seed_g,
-                }
-                if isinstance(sample_scheduler, DEISMultistepScheduler) or isinstance(sample_scheduler, FlowMatchScheduler):
-                    step_args.pop("generator", None)
-                temp_x0 = sample_scheduler.step(
-                    noise_pred[:, :orig_noise_len].unsqueeze(0) if recammaster is not None else noise_pred.unsqueeze(0),
-                    t,
-                    latent[:, :orig_noise_len].unsqueeze(0) if recammaster is not None else latent.unsqueeze(0),
-                    #return_dict=False,
-                    **step_args)[0]
-                latent = temp_x0.squeeze(0)
-
-                x0 = latent.to(device)
-                if callback is not None:
-                    if recammaster is not None:
-                        callback_latent = (latent_model_input[:, :orig_noise_len].to(device) - noise_pred[:, :orig_noise_len].to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
-                    elif phantom_latents is not None:
-                        callback_latent = (latent_model_input[:,:-phantom_latents.shape[1]].to(device) - noise_pred[:,:-phantom_latents.shape[1]].to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
-                    else:
-                        callback_latent = (latent_model_input.to(device) - noise_pred.to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
-                    callback(idx, callback_latent, None, steps)
+                        pbar.update(1)
+                    del latent_model_input, timestep
                 else:
-                    pbar.update(1)
-                del latent_model_input, timestep
-            else:
-                if callback is not None:
-                    callback_latent = (zt_tgt.to(device) - vt_tgt.to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
-                    callback(idx, callback_latent, None, steps)
-                else:
-                    pbar.update(1)
+                    if callback is not None:
+                        callback_latent = (zt_tgt.to(device) - vt_tgt.to(device) * t.to(device) / 1000).detach().permute(1,0,2,3)
+                        callback(idx, callback_latent, None, steps)
+                    else:
+                        pbar.update(1)
+
+            # Store result for next iteration
+            current_latent = x0.clone()
 
         if phantom_latents is not None:
             x0 = x0[:,:-phantom_latents.shape[1]]
