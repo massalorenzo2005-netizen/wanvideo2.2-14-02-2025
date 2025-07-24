@@ -20,6 +20,15 @@ try:
 except:
     pass
 
+try:
+    from liger_kernel.ops.rms_norm import LigerRMSNormFunction
+    from liger_kernel.ops.layer_norm import LigerLayerNormFunction
+    from liger_kernel.transformers import LigerLayerNorm
+
+    liger_available = True
+except Exeption as e:
+    liger_available = False
+
 from .attention import attention
 import numpy as np
 __all__ = ['WanModel']
@@ -202,12 +211,23 @@ class WanRMSNorm(nn.Module):
         r"""
         Args:
             x(Tensor): Shape [B, L, C]
-        """
-        use_chunked = num_chunks > 1
-        if use_chunked:
-            return self.forward_chunked(x, num_chunks)
+        """       
+        if liger_available: 
+            return LigerRMSNormFunction.apply(
+                x,
+                self.weight,
+                self.eps,
+                offset=0.0,
+                casting_mode="llama",
+                in_place=True,
+                row_mode=None,
+            )
         else:
-            return self._norm(x) * self.weight
+            use_chunked = num_chunks > 1
+            if use_chunked:
+                return self.forward_chunked(x, num_chunks)
+            else:
+                return self._norm(x) * self.weight
 
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps).to(x.dtype)
@@ -242,8 +262,10 @@ class WanLayerNorm(nn.LayerNorm):
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return super().forward(x)
-
+        if liger_available:
+            return LigerLayerNormFunction.apply(x, self.weight, self.bias, self.eps)
+        else:
+            return super().forward(x)
 
 class WanSelfAttention(nn.Module):
 
@@ -936,10 +958,16 @@ class MLPProj(torch.nn.Module):
     def __init__(self, in_dim, out_dim, fl_pos_emb=False):
         super().__init__()
 
-        self.proj = torch.nn.Sequential(
-            torch.nn.LayerNorm(in_dim), torch.nn.Linear(in_dim, in_dim),
-            torch.nn.GELU(), torch.nn.Linear(in_dim, out_dim),
-            torch.nn.LayerNorm(out_dim))
+        if liger_available:
+            self.proj = torch.nn.Sequential(
+                LigerLayerNorm(in_dim), torch.nn.Linear(in_dim, in_dim),
+                torch.nn.GELU(), torch.nn.Linear(in_dim, out_dim),
+                LigerLayerNorm(out_dim))
+        else:
+            self.proj = torch.nn.Sequential(
+                torch.nn.LayerNorm(in_dim), torch.nn.Linear(in_dim, in_dim),
+                torch.nn.GELU(), torch.nn.Linear(in_dim, out_dim),
+                torch.nn.LayerNorm(out_dim))
         if fl_pos_emb:  # NOTE: we only use this for `fl2v`
             self.emb_pos = nn.Parameter(torch.zeros(1, 257 * 2, 1280))
 
