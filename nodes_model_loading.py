@@ -1132,7 +1132,7 @@ class WanVideoModelLoader:
         
         if gguf:
             #from diffusers.quantizers.gguf.utils import _replace_with_gguf_linear, GGUFParameter
-            from .gguf.gguf import _replace_with_gguf_linear, GGUFParameter
+            from .quantization.gguf import _replace_with_gguf_linear, GGUFParameter
             log.info("Using GGUF to load and assign model weights to device...")
             param_count = sum(1 for _ in transformer.named_parameters())
             

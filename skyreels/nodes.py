@@ -10,7 +10,7 @@ from ..wanvideo.schedulers.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from ..fp8_optimization import convert_linear_with_lora_and_scale, remove_lora_from_module
 from ..wanvideo.schedulers.scheduling_flow_match_lcm import FlowMatchLCMScheduler
-from ..gguf.gguf import set_lora_params
+from ..quantization.gguf import set_lora_params
 from einops import rearrange
 
 from ..enhance_a_video.globals import disable_enhance

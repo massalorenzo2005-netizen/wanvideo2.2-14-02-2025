@@ -10,7 +10,7 @@ from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from .wanvideo.modules.model import rope_params
 from .fp8_optimization import convert_linear_with_lora_and_scale, remove_lora_from_module
 from .wanvideo.schedulers import get_scheduler, get_sampling_sigmas, retrieve_timesteps, scheduler_list
-from .gguf.gguf import set_lora_params
+from .quantization.gguf import set_lora_params
 from .multitalk.multitalk import timestep_transform, add_noise
 from .utils import(log, print_memory, apply_lora, clip_encode_image_tiled, fourier_filter, 
                    is_image_black, add_noise_to_reference_video, optimized_scale, setup_radial_attention, 
