@@ -1711,6 +1711,7 @@ class LoadWanVideoClipTextEncoder:
 
 NODE_CLASS_MAPPINGS = {
     "WanVideoModelLoader": WanVideoModelLoader,
+    "WanVideoModelLoaderDFloat11": WanVideoModelLoaderDFloat11,
     "WanVideoVAELoader": WanVideoVAELoader,
     "WanVideoLoraSelect": WanVideoLoraSelect,
     "WanVideoSetLoRAs": WanVideoSetLoRAs,
@@ -1727,6 +1728,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoModelLoader": "WanVideo Model Loader",
+    "WanVideoModelLoaderDFloat11": "WanVideo Model Loader DFloat11",
     "WanVideoVAELoader": "WanVideo VAE Loader",
     "WanVideoLoraSelect": "WanVideo Lora Select",
     "WanVideoSetLoRAs": "WanVideo Set LoRAs",
