@@ -1292,7 +1292,7 @@ class WanVideoModelLoaderDFloat11:
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision, load_device,
+    def loadmodel(self, model, load_device,
                   compile_args=None, attention_mode="sdpa", block_swap_args=None,):
         base_precision = "bf16"
         try:
