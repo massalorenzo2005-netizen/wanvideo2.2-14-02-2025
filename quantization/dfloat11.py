@@ -185,10 +185,20 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
                 if tensor_name in dict(model.named_parameters()):
                     # It's a parameter, we can set it directly
                     param = dict(model.named_parameters())[tensor_name]
-                    try:
-                        getattr(model, tensor_name).to_empty(device="cpu")
-                    except Exception as _:
-                        getattr(model, '.'.join(tensor_name.split(".")[:-1])).to_empty(device="cpu")
+                    if "blocks." in tensor_name:
+                        # send only the current layer
+                        bidx = int(tensor_name.split(".")[1])
+                        block = getattr(model, "blocks")[bidx]
+                        if param.is_meta:
+                            # time to send the whole block to cpu
+                            block.to_empty(device="cpu")
+                    else:
+                        # send the maximum parent layer to cpu
+                        if param.is_meta:
+                            block = getattr(model, tensor_name.split(".")[0])
+                            # time to send the whole block to cpu
+                            block.to_empty(device="cpu")
+                    
                     if param.shape == tensor_value.shape:
                         actual_loaded_tensors.append(tensor_name)
                         param.data.copy_(tensor_value)
