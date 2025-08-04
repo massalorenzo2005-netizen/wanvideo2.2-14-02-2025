@@ -9,6 +9,8 @@ from tqdm import tqdm
 from safetensors.torch import load_file
 from .dfloat11_core import get_hook
 import re
+import comfy.model_management as mm
+import gc
 
 def rename_diffusers_to_comfy(state_dict):
     new_state_dict = {}
@@ -265,6 +267,10 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
             raise Exception(f"Some tensors are not loaded when loading a layer!\nNot loaded tensors: {set(loaded_tensors.keys()) - actual_loaded_tensors}\nExtra tensors: {actual_loaded_tensors - set(loaded_tensors.keys())}")
         
         total_actual_loaded_tensors.extend(list(actual_loaded_tensors))
+        
+        # soft empty cache after layer load
+        gc.collect()
+        mm.soft_empty_cache()
     
     model.expanded_patch_embedding = model.patch_embedding
     model.original_patch_embedding = model.patch_embedding
