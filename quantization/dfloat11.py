@@ -218,7 +218,10 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
                                         parts = attr_path.split('.')
                                         target = module
                                         for p in parts:
-                                            target = getattr(target, p)
+                                            try:
+                                                target = getattr(target, p)
+                                            except Exception as e:
+                                                raise ValueError(f"Not found: {attr_path}\n{p}\n", str(e))
 
                                         tmp = target.weight
                                         delattr(target, 'weight')
