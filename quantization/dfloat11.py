@@ -273,6 +273,14 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
     if total_actual_loaded_tensors != set(model.state_dict().keys()):
         raise Exception(f"Some tensors are not loaded globally!\nNot loaded tensors: {set(model.state_dict().keys()) - total_actual_loaded_tensors}\nExtra tensors: {total_actual_loaded_tensors-set(model.state_dict().keys())}")
     
+    # Meta check
+    meta_tensors = []
+    for name, param in model.named_parameters():
+        if param.is_meta:
+            meta_tensors.append(name)
+    if len(meta_tensors) > 0:
+        raise Exception(f"Meta tensors found: {meta_tensors}")
+    
     return model
 
 class DFloat11Model:
