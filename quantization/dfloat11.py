@@ -19,6 +19,7 @@ def rename_diffusers_to_comfy(state_dict):
         'patch_embedding.bias': 'patch_embedding.bias',
         'proj_out.weight': 'head.head.weight',
         'proj_out.bias': 'head.head.bias',
+        'scale_shift_table': 'head.modulation',
         'condition_embedder.text_embedder.linear_1.weight': 'text_embedding.0.weight',
         'condition_embedder.text_embedder.linear_1.bias': 'text_embedding.0.bias',
         'condition_embedder.text_embedder.linear_2.weight': 'text_embedding.2.weight',
@@ -28,7 +29,7 @@ def rename_diffusers_to_comfy(state_dict):
         'condition_embedder.time_embedder.linear_2.weight': 'time_embedding.2.weight',
         'condition_embedder.time_embedder.linear_2.bias': 'time_embedding.2.bias',
         'condition_embedder.time_proj.weight': 'time_projection.1.weight',
-        'condition_embedder.time_proj.bias': 'time_projection.1.bias'
+        'condition_embedder.time_proj.bias': 'time_projection.1.bias',
     }
     
     for old_key, new_key in non_block_keys.items():
@@ -261,8 +262,11 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
         
         total_actual_loaded_tensors.extend(actual_loaded_tensors)
     
+    model.expanded_patch_embedding = model.patch_embedding
+    model.original_patch_embedding = model.patch_embedding
+    total_actual_loaded_tensors.extend("original_patch_embedding", "expanded_patch_embedding")
     if set(total_actual_loaded_tensors) != set(model.state_dict().keys()):
-        raise Exception(f"Some tensors are not loaded!\nLoaded keys:\n{set(model.state_dict().keys())}\nActual loaded tensors: {set(total_actual_loaded_tensors)}\nNot loaded tensors: {set(model.state_dict().keys()) - set(total_actual_loaded_tensors)}")
+        raise Exception(f"Some tensors are not loaded!\nNot loaded tensors: {set(model.state_dict().keys()) - set(total_actual_loaded_tensors)}")
     
     return model
 
