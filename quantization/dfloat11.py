@@ -303,6 +303,18 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
     
     return model
 
+def remove_all_hooks(layer):
+    layer._forward_pre_hooks.clear()
+
+# I assume the whole model has been converted into dfloat11
+def increase_precision(model):
+    model.time_embedding = model.time_embedding.to(torch.float32)
+    model.patch_embedding = model.patch_embedding.to(torch.float32)
+    remove_all_hooks(model.time_embedding)
+    remove_all_hooks(model.patch_embedding)
+    # Todo: maybe some other modules
+    return model
+
 class DFloat11Model:
     """
     Wrapper class for loading and using models with DFloat11 compressed weights.
@@ -363,6 +375,7 @@ class DFloat11Model:
 
         # Move model to specified device ~~or distribute across multiple devices~~
         # -- KJ wrapper will take care of it
+        model = increase_precision(model)
         model = model.to(device)
 
         return model
