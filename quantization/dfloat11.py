@@ -266,7 +266,7 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
     model.original_patch_embedding = model.patch_embedding
     total_actual_loaded_tensors.extend(["original_patch_embedding.weight", "original_patch_embedding.bias", "expanded_patch_embedding.weight", "expanded_patch_embedding.bias"])
     if set(total_actual_loaded_tensors) != set(model.state_dict().keys()):
-        raise Exception(f"Some tensors are not loaded!\nNot loaded tensors: {set(model.state_dict().keys()) - set(total_actual_loaded_tensors)}")
+        raise Exception(f"Some tensors are not loaded!\nNot loaded tensors: {set(model.state_dict().keys()) - set(total_actual_loaded_tensors)}\nExtra tensors: {set(total_actual_loaded_tensors)-set(model.state_dict().keys())}")
     
     return model
 
