@@ -994,7 +994,6 @@ class WanModel(torch.nn.Module):
                  in_dim_ref_conv=16,
                  add_control_adapter=False,
                  in_dim_control_adapter=24,
-                 is_dfloat11=False,
                  ):
         r"""
         Initialize the diffusion model backbone.
@@ -1095,8 +1094,6 @@ class WanModel(torch.nn.Module):
         self.slg_end_percent = 1.0
 
         self.use_non_blocking = False
-        
-        self.is_dfloat11=is_dfloat11
 
         self.video_attention_split_steps = []
 
@@ -1531,7 +1528,7 @@ class WanModel(torch.nn.Module):
         else:
             expanded_timesteps = False
 
-        e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).to(torch.float32 if self.is_dfloat11 else x.dtype)).to(x.dtype)  # b, dim
+        e = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t.flatten()).to(x.dtype))  # b, dim
         e0 = self.time_projection(e).unflatten(1, (6, self.dim))  # b, 6, dim
 
         if fps_embeds is not None:

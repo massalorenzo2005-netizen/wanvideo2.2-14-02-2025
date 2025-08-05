@@ -180,6 +180,8 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
         # Iterate over each tensor in the file
         for tensor_name, tensor_value in loaded_tensors.items():
             # print(tensor_name, tensor_value.dtype)
+            if torch.is_floating_point(tensor_value):
+                tensor_value = tensor_value.to(torch.bfloat16)
             # Check if this tensor exists in the model's state dict
             if tensor_name in model.state_dict():
                 # Get the parameter or buffer
