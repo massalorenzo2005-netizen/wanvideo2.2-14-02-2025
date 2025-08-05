@@ -1382,7 +1382,7 @@ class WanVideoModelLoaderDFloat11:
         log.info(f"Model variant detected: {model_variant}")
         
         with init_empty_weights():
-            transformer = WanModel(**TRANSFORMER_CONFIG, is_dfloat11=True)
+            transformer = WanModel(**TRANSFORMER_CONFIG)
         transformer.eval()
         
         latent_format=Wan22 if "2.2" in model else Wan21
