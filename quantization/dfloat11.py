@@ -179,6 +179,7 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
 
         # Iterate over each tensor in the file
         for tensor_name, tensor_value in loaded_tensors.items():
+            # print(tensor_name, tensor_value.dtype)
             # Check if this tensor exists in the model's state dict
             if tensor_name in model.state_dict():
                 # Get the parameter or buffer
@@ -306,15 +307,6 @@ def load_and_replace_tensors(model, directory_path, dfloat11_config, cpu_offload
 def remove_all_hooks(layer):
     layer._forward_pre_hooks.clear()
 
-# I assume the whole model has been converted into dfloat11
-def increase_precision(model):
-    model.time_embedding = model.time_embedding.to(torch.float32)
-    model.patch_embedding = model.patch_embedding.to(torch.float32)
-    remove_all_hooks(model.time_embedding)
-    remove_all_hooks(model.patch_embedding)
-    # Todo: maybe some other modules
-    return model
-
 class DFloat11Model:
     """
     Wrapper class for loading and using models with DFloat11 compressed weights.
@@ -374,8 +366,6 @@ class DFloat11Model:
             log.info(f"Total model size: {model_bytes / 1e9:0.4f} GB")
 
         # Move model to specified device ~~or distribute across multiple devices~~
-        # -- KJ wrapper will take care of it
-        model = increase_precision(model)
         model = model.to(device)
 
         return model
