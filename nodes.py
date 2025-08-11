@@ -3403,6 +3403,24 @@ class WanVideoLatentReScale:
 
         return (samples,)
 
+class WanVideoSchedulerSelector:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "scheduler": (scheduler_list, {"default": scheduler_list[0]}),
+            }
+        }
+
+    RETURN_TYPES = (scheduler_list,)
+    RETURN_NAMES = ("scheduler",)
+    FUNCTION = "return_scheduler"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Helper node to set same scheduler on multiple samplers"
+
+    def return_scheduler(self, scheduler):
+        return (scheduler,)
+
 NODE_CLASS_MAPPINGS = {
     "WanVideoSampler": WanVideoSampler,
     "WanVideoDecode": WanVideoDecode,
@@ -3432,6 +3450,7 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoTextEncodeCached": WanVideoTextEncodeCached,
     "WanVideoAddExtraLatent": WanVideoAddExtraLatent,
     "WanVideoLatentReScale": WanVideoLatentReScale,
+    "WanVideoSchedulerSelector": WanVideoSchedulerSelector,
     }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoSampler": "WanVideo Sampler",
@@ -3463,4 +3482,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoTextEncodeCached": "WanVideo TextEncode Cached",
     "WanVideoAddExtraLatent": "WanVideo Add Extra Latent",
     "WanVideoLatentReScale": "WanVideo Latent ReScale",
+    "WanVideoSchedulerSelector": "WanVideo Scheduler Selector",
     }

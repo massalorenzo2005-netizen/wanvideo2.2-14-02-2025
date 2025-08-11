@@ -6,6 +6,7 @@ from .flowmatch_pusa import FlowMatchSchedulerPusa
 from .flowmatch_res_multistep import FlowMatchSchedulerResMultistep
 from .scheduling_flow_match_lcm import FlowMatchLCMScheduler
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler, DEISMultistepScheduler
+from .fm_solvers_euler import EulerScheduler
 
 from ...utils import log
 
@@ -21,6 +22,8 @@ scheduler_list = [
     "flowmatch_causvid",
     "flowmatch_distill",
     "flowmatch_pusa",
+    "lighting_euler_distill", "lighting_euler_distill/beta",
+    "lighting_euler", "lighting_euler/beta", "lighting_euler/beta57",
     "multitalk"
 ]
 
@@ -104,6 +107,42 @@ def get_scheduler(scheduler, steps, shift, device, transformer_dim, flowedit_arg
             shift=shift, sigma_min=0.0, extra_one_step=True
         )
         sample_scheduler.set_timesteps(steps, denoising_strength=denoise_strength, shift=shift, sigmas=sigmas[:-1].tolist() if sigmas is not None else None)
+    elif 'lighting_euler_distill' in scheduler:
+        if sigmas is not None:
+            raise NotImplementedError("This scheduler does not support custom sigmas")
+        sample_scheduler = FlowMatchEulerDiscreteScheduler(shift=shift, use_beta_sigmas=(scheduler == 'euler/beta'))
+
+        denoising_step_list = torch.tensor([1000.0000, 937.5001, 833.3333, 625.0000], dtype=torch.float32)
+
+        log.info(f"denoising_step_list: {denoising_step_list}")
+
+        if steps != 4:
+            raise ValueError("This scheduler is only for 4 steps")
+
+        sample_scheduler.timesteps = denoising_step_list[:steps].clone().detach().to(device)
+        sample_scheduler.sigmas = torch.cat([sample_scheduler.timesteps / 1000, torch.tensor([0.0], device=device)])
+    elif 'lighting_euler' in scheduler:
+        if sigmas is not None:
+            raise NotImplementedError("This scheduler does not support custom sigmas")
+
+        # --- resolve Beta shaping + (alpha, beta) for 'beta57' ---
+        use_beta = (scheduler == 'lighting_euler/beta') or (scheduler == 'lighting_euler/beta57')
+        alpha_val, beta_val = (0.6, 0.6)
+        if scheduler == 'lighting_euler/beta57':
+            alpha_val, beta_val = (0.5, 0.7)
+
+        sample_scheduler = EulerScheduler(
+            num_train_timesteps=1000,
+            shift=shift,
+            device=device,
+            use_beta_sigmas=use_beta,
+            # --- pass alpha/beta (no-op for plain lighting_euler) ---
+            alpha=alpha_val,
+            beta=beta_val,
+        )
+
+        sample_scheduler.set_timesteps(num_inference_steps=steps, device=device)
+        timesteps = sample_scheduler.timesteps[:-1].clone()
     elif scheduler == 'res_multistep':
         sample_scheduler = FlowMatchSchedulerResMultistep(shift=shift)
         sample_scheduler.set_timesteps(steps, denoising_strength=denoise_strength, sigmas=sigmas[:-1].tolist() if sigmas is not None else None)
