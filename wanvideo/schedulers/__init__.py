@@ -22,7 +22,7 @@ scheduler_list = [
     "flowmatch_causvid",
     "flowmatch_distill",
     "flowmatch_pusa",
-    "lighting_euler", "lighting_euler/beta", "lighting_euler/beta57",
+    "lightning_euler", "lightning_euler/beta", "lightning_euler/beta57",
     "multitalk"
 ]
 
@@ -111,9 +111,9 @@ def get_scheduler(scheduler, steps, shift, device, transformer_dim, flowedit_arg
             raise NotImplementedError("This scheduler does not support custom sigmas")
 
         # --- resolve Beta shaping + (alpha, beta) for 'beta57' ---
-        use_beta = (scheduler == 'lighting_euler/beta') or (scheduler == 'lighting_euler/beta57')
+        use_beta = (scheduler == 'lightning_euler/beta') or (scheduler == 'lightning_euler/beta57')
         alpha_val, beta_val = (0.6, 0.6)
-        if scheduler == 'lighting_euler/beta57':
+        if scheduler == 'lightning_euler/beta57':
             alpha_val, beta_val = (0.5, 0.7)
 
         sample_scheduler = EulerScheduler(
