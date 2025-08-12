@@ -752,7 +752,6 @@ class WanVideoImageToVideoEncode:
     @classmethod
     def INPUT_TYPES(s):
         return {"required": {
-            "vae": ("WANVAE",),
             "width": ("INT", {"default": 832, "min": 64, "max": 8096, "step": 8, "tooltip": "Width of the image to encode"}),
             "height": ("INT", {"default": 480, "min": 64, "max": 8096, "step": 8, "tooltip": "Height of the image to encode"}),
             "num_frames": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 4, "tooltip": "Number of frames to encode"}),
@@ -762,6 +761,7 @@ class WanVideoImageToVideoEncode:
             "force_offload": ("BOOLEAN", {"default": True}),
             },
             "optional": {
+                "vae": ("WANVAE",),
                 "clip_embeds": ("WANVIDIMAGE_CLIPEMBEDS", {"tooltip": "Clip vision encoded image"}),
                 "start_image": ("IMAGE", {"tooltip": "Image to encode"}),
                 "end_image": ("IMAGE", {"tooltip": "end frame"}),
@@ -779,10 +779,16 @@ class WanVideoImageToVideoEncode:
     FUNCTION = "process"
     CATEGORY = "WanVideoWrapper"
 
-    def process(self, vae, width, height, num_frames, force_offload, noise_aug_strength, 
+    def process(self, width, height, num_frames, force_offload, noise_aug_strength, 
                 start_latent_strength, end_latent_strength, start_image=None, end_image=None, control_embeds=None, fun_or_fl2v_model=False, 
-                temporal_mask=None, extra_latents=None, clip_embeds=None, tiled_vae=False, add_cond_latents=None):
-
+                temporal_mask=None, extra_latents=None, clip_embeds=None, tiled_vae=False, add_cond_latents=None, vae=None):
+        
+        if start_image is None and end_image is None:
+            return WanVideoEmptyEmbeds().process(
+                num_frames, width, height, control_embeds=control_embeds, extra_latents=extra_latents,
+            )
+        if vae is None:
+            raise ValueError("VAE is required for image encoding.")
         H = height
         W = width
            
@@ -1443,6 +1449,23 @@ class WanVideoFreeInitArgs:
     def process(self, **kwargs):
         return (kwargs,)
     
+class WanVideoScheduler: #WIP
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+                "scheduler": (scheduler_list, {"default": "uni_pc"}),
+            },
+        }
+
+    RETURN_TYPES = (scheduler_list, )
+    RETURN_NAMES = ("scheduler",)
+    FUNCTION = "process"
+    CATEGORY = "WanVideoWrapper"
+    EXPERIMENTAL = True
+
+    def process(self, scheduler):
+        return (scheduler,)
+    
 #region Sampler
 class WanVideoSampler:
     @classmethod
@@ -1918,9 +1941,24 @@ class WanVideoSampler:
                noise = noise * latent_timestep / 1000 + (1 - latent_timestep / 1000) * input_samples
             else:
                 noise = input_samples
-            mask = samples.get("mask", None)
+
+            mask = samples.get("noise_mask", None)
             if mask is not None:
+                log.info(f"Latent mask shape: {mask.shape}")
                 original_image = input_samples.to(device)
+                if len(mask.shape) == 4:
+                    mask = mask.squeeze(1)
+
+                mask = torch.nn.functional.interpolate(
+                    mask.unsqueeze(0).unsqueeze(0),  # Add batch and channel dims [1,1,T,H,W]
+                    size=(noise.shape[1], noise.shape[2], noise.shape[3]),
+                    mode='trilinear',
+                    align_corners=False
+                ).squeeze(0)  # Remove batch dim, keep channel dim
+            
+                # Add batch & channel dims for final output
+                mask = mask.unsqueeze(0).repeat(1, noise.shape[0], 1, 1, 1)
+
                 if mask.shape[2] != noise.shape[1]:
                     mask = torch.cat([torch.zeros(1, noise.shape[0], noise.shape[1] - mask.shape[2], noise.shape[2], noise.shape[3]), mask], dim=2)
         
@@ -3342,27 +3380,10 @@ class WanVideoEncode:
         if latent_strength != 1.0:
             latents *= latent_strength
 
-        log.info(f"encoded latents shape {latents.shape}")
-        latent_mask = None
-        if mask is None:
-            vae.to(offload_device)
-        else:
-            target_h, target_w = latents.shape[3:]
-
-            mask = torch.nn.functional.interpolate(
-                mask.unsqueeze(0).unsqueeze(0),  # Add batch and channel dims [1,1,T,H,W]
-                size=(latents.shape[2], target_h, target_w),
-                mode='trilinear',
-                align_corners=False
-            ).squeeze(0)  # Remove batch dim, keep channel dim
-            
-            # Add batch & channel dims for final output
-            latent_mask = mask.unsqueeze(0).repeat(1, latents.shape[1], 1, 1, 1)
-            log.info(f"latent mask shape {latent_mask.shape}")
-            vae.to(offload_device)
+        log.info(f"WanVideoEncode: Encoded latents shape {latents.shape}")
         mm.soft_empty_cache()
  
-        return ({"samples": latents, "mask": latent_mask},)
+        return ({"samples": latents, "noise_mask": mask},)
 
 class WanVideoLatentReScale:
     @classmethod
@@ -3403,24 +3424,6 @@ class WanVideoLatentReScale:
 
         return (samples,)
 
-class WanVideoSchedulerSelector:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "scheduler": (scheduler_list, {"default": scheduler_list[0]}),
-            }
-        }
-
-    RETURN_TYPES = (scheduler_list,)
-    RETURN_NAMES = ("scheduler",)
-    FUNCTION = "return_scheduler"
-    CATEGORY = "WanVideoWrapper"
-    DESCRIPTION = "Helper node to set same scheduler on multiple samplers"
-
-    def return_scheduler(self, scheduler):
-        return (scheduler,)
-
 NODE_CLASS_MAPPINGS = {
     "WanVideoSampler": WanVideoSampler,
     "WanVideoDecode": WanVideoDecode,
@@ -3450,8 +3453,8 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoTextEncodeCached": WanVideoTextEncodeCached,
     "WanVideoAddExtraLatent": WanVideoAddExtraLatent,
     "WanVideoLatentReScale": WanVideoLatentReScale,
-    "WanVideoSchedulerSelector": WanVideoSchedulerSelector,
-    }
+    "WanVideoScheduler": WanVideoScheduler
+
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoSampler": "WanVideo Sampler",
     "WanVideoDecode": "WanVideo Decode",
@@ -3482,5 +3485,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoTextEncodeCached": "WanVideo TextEncode Cached",
     "WanVideoAddExtraLatent": "WanVideo Add Extra Latent",
     "WanVideoLatentReScale": "WanVideo Latent ReScale",
-    "WanVideoSchedulerSelector": "WanVideo Scheduler Selector",
+    "WanVideoScheduler": "WanVideo Scheduler Selector",
     }

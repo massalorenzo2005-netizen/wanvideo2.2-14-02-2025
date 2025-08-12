@@ -448,6 +448,33 @@ class WanSelfAttention(nn.Module):
         
         return nag_guidance * nag_alpha + x_positive * (1 - nag_alpha)
 
+class LoRALinearLayer(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        rank: int = 128,
+        device=torch.device("cuda"),
+        dtype=torch.float32,
+    ):
+        super().__init__()
+        self.down = nn.Linear(in_features, rank, bias=False, device=device, dtype=dtype)
+        self.up = nn.Linear(rank, out_features, bias=False, device=device, dtype=dtype)
+        self.rank = rank
+        self.out_features = out_features
+        self.in_features = in_features
+
+        nn.init.normal_(self.down.weight, std=1 / rank)
+        nn.init.zeros_(self.up.weight)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        orig_dtype = hidden_states.dtype
+        dtype = self.down.weight.dtype
+
+        down_hidden_states = self.down(hidden_states.to(dtype))
+        up_hidden_states = self.up(down_hidden_states)
+        return up_hidden_states.to(orig_dtype)
+                        
 #region crossattn
 class WanT2VCrossAttention(WanSelfAttention):
 
