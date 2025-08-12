@@ -3454,7 +3454,7 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoAddExtraLatent": WanVideoAddExtraLatent,
     "WanVideoLatentReScale": WanVideoLatentReScale,
     "WanVideoScheduler": WanVideoScheduler
-
+    }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoSampler": "WanVideo Sampler",
     "WanVideoDecode": "WanVideo Decode",
