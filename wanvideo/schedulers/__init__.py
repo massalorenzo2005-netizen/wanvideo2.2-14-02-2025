@@ -106,7 +106,7 @@ def get_scheduler(scheduler, steps, shift, device, transformer_dim, flowedit_arg
             shift=shift, sigma_min=0.0, extra_one_step=True
         )
         sample_scheduler.set_timesteps(steps, denoising_strength=denoise_strength, shift=shift, sigmas=sigmas[:-1].tolist() if sigmas is not None else None)
-    elif 'lighting_euler' in scheduler:
+    elif 'lightning_euler' in scheduler:
         if sigmas is not None:
             raise NotImplementedError("This scheduler does not support custom sigmas")
 
