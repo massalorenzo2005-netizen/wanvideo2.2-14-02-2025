@@ -12,9 +12,7 @@ class MultiTalkModelLoader:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model": (folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' -folder",}),
-
-            "base_precision": (["fp32", "bf16", "fp16"], {"default": "fp16"}),
+                "model": (folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' -folder",}),
             },
         }
 
@@ -23,18 +21,16 @@ class MultiTalkModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "WanVideoWrapper"
 
-    def loadmodel(self, model, base_precision):
+    def loadmodel(self, model, base_precision=None):
         from .multitalk import AudioProjModel
-
-        device = mm.get_torch_device()
         offload_device = mm.unet_offload_device()
-        base_dtype = {"fp8_e4m3fn": torch.float8_e4m3fn, "fp8_e4m3fn_fast": torch.float8_e4m3fn, "bf16": torch.bfloat16, "fp16": torch.float16, "fp16_fast": torch.float16, "fp32": torch.float32}[base_precision]
         
         model_path = folder_paths.get_full_path_or_raise("diffusion_models", model)
-        sd = load_torch_file(model_path, device=offload_device, safe_load=True)
-
-        audio_proj_keys = [k for k in sd.keys() if "audio_proj" in k]
-        audio_proj_sd = {k.replace("audio_proj.", ""): sd.pop(k) for k in audio_proj_keys}
+        if model_path.endswith(".gguf"):
+            from diffusers.models.model_loading_utils import load_gguf_checkpoint
+            sd = load_gguf_checkpoint(model_path)
+        else:
+            sd = load_torch_file(model_path, device=offload_device, safe_load=True)
 
         audio_window=5
         intermediate_dim=512
@@ -52,18 +48,14 @@ class MultiTalkModelLoader:
                     context_tokens=context_tokens,
                     norm_output_audio=norm_output_audio,
             )
-        #fantasytalking_proj_model.load_state_dict(sd, strict=False)
-
-        for name, param in multitalk_proj_model.named_parameters():
-            set_module_tensor_to_device(multitalk_proj_model, name, device=offload_device, dtype=base_dtype, value=audio_proj_sd[name])
 
         multitalk = {
             "proj_model": multitalk_proj_model,
             "sd": sd,
+            "is_gguf": model_path.endswith(".gguf")
         }
 
         return (multitalk,)
-    
 
 def loudness_norm(audio_array, sr=16000, lufs=-23):
     try:
@@ -83,8 +75,8 @@ class MultiTalkWav2VecEmbeds:
         return {"required": {
             "wav2vec_model": ("WAV2VECMODEL",),
             "audio_1": ("AUDIO",),
-            "normalize_loudness": ("BOOLEAN", {"default": True}),
-            "num_frames": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 1}),
+            "normalize_loudness": ("BOOLEAN", {"default": True, "tooltip": "Normalize the audio loudness to -23 LUFS"}),
+            "num_frames": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 1, "tooltip": "The total frame count to generate."}),
             "fps": ("FLOAT", {"default": 25.0, "min": 1.0, "max": 60.0, "step": 0.1}),
             "audio_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1, "tooltip": "Strength of the audio conditioning"}),
             "audio_cfg_scale": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1, "tooltip": "When not 1.0, an extra model pass without audio conditioning is done: slower inference but more motion is allowed"}),
@@ -251,11 +243,11 @@ class WanVideoImageToVideoMultiTalk:
     def INPUT_TYPES(s):
         return {"required": {
             "vae": ("WANVAE",),
-            "width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8, "tooltip": "Width of the image to encode"}),
-            "height": ("INT", {"default": 480, "min": 64, "max": 29048, "step": 8, "tooltip": "Height of the image to encode"}),
-            "frame_window_size": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 4, "tooltip": "Number of frames to encode"}),
-            "motion_frame": ("INT", {"default": 25, "min": 1, "max": 10000, "step": 1, "tooltip": "Driven frame length used in the long video generation."}),
-            "force_offload": ("BOOLEAN", {"default": True}),
+            "width": ("INT", {"default": 832, "min": 64, "max": 2048, "step": 8, "tooltip": "Width of the generation"}),
+            "height": ("INT", {"default": 480, "min": 64, "max": 29048, "step": 8, "tooltip": "Height of the generation"}),
+            "frame_window_size": ("INT", {"default": 81, "min": 1, "max": 10000, "step": 4, "tooltip": "The number of frames to process at once, should be a value the model is generally good at."}),
+            "motion_frame": ("INT", {"default": 25, "min": 1, "max": 10000, "step": 1, "tooltip": "Driven frame length used in the long video generation. Basically the overlap length."}),
+            "force_offload": ("BOOLEAN", {"default": False, "tooltip": "Whether to force offload the model within the loop for VAE operations, enable if you encounter memory issues."}),
             "colormatch": (
             [   
                 'disabled',
@@ -266,11 +258,11 @@ class WanVideoImageToVideoMultiTalk:
                 'hm-mvgd-hm', 
                 'hm-mkl-hm',
             ], {
-               "default": 'disabled'
-            }),
+               "default": 'disabled', "tooltip": "Color matching method to use between the windows"
+            },),
             },
             "optional": {
-                "start_image": ("IMAGE", {"tooltip": "Image to encode"}),
+                "start_image": ("IMAGE", {"tooltip": "Images to encode"}),
                 "tiled_vae": ("BOOLEAN", {"default": False, "tooltip": "Use tiled VAE encoding for reduced memory use"}),
                 "clip_embeds": ("WANVIDIMAGE_CLIPEMBEDS", {"tooltip": "Clip vision encoded image"}),
                 "mode": ([
@@ -284,6 +276,7 @@ class WanVideoImageToVideoMultiTalk:
     RETURN_NAMES = ("image_embeds",)
     FUNCTION = "process"
     CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Enables Multi/InfiniteTalk long video generation sampling method, the video is created in windows with overlapping frames. Not compatible or necessary to be used with context windows and many other features besides Multi/InfiniteTalk."
 
     def process(self, vae, width, height, frame_window_size, motion_frame, force_offload, colormatch, start_image=None, tiled_vae=False, clip_embeds=None, mode="multitalk"):
 
