@@ -826,9 +826,9 @@ class WanVideoImageToVideoEncode:
         H = height
         W = width
            
-        lat_h = H // 8
-        lat_w = W // 8
-        
+        lat_h = H // vae.upsampling_factor
+        lat_w = W // vae.upsampling_factor
+
         num_frames = ((num_frames - 1) // 4) * 4 + 1
         two_ref_images = start_image is not None and end_image is not None
 
@@ -1746,7 +1746,7 @@ class WanVideoSampler:
 
             control_embeds = image_embeds.get("control_embeds", None)
             if control_embeds is not None:
-                if transformer.in_dim not in [52, 48, 36, 32]:
+                if transformer.in_dim not in [148, 52, 48, 36, 32]:
                     raise ValueError("Control signal only works with Fun-Control model")
 
                 control_latents = control_embeds.get("control_images", None)
@@ -1843,10 +1843,10 @@ class WanVideoSampler:
                         patcher = apply_lora(patcher, device, device, low_mem_load=False, control_lora=True)
                         patcher.model.is_patched = True
                 else:
-                    if transformer.in_dim not in [48, 36, 32, 52]:
+                    if transformer.in_dim not in [148, 48, 36, 32, 52]:
                         raise ValueError("Control signal only works with Fun-Control model")
                     image_cond = torch.zeros_like(noise).to(device) #fun control
-                    if transformer.in_dim == 52 or transformer.control_adapter is not None: #fun 2.2 control
+                    if transformer.in_dim in [148, 52] or transformer.control_adapter is not None: #fun 2.2 control
                         mask_latents = torch.tile(
                             torch.zeros_like(noise[:1]), [4, 1, 1, 1]
                         )
@@ -1860,7 +1860,7 @@ class WanVideoSampler:
                 control_start_percent = control_embeds.get("start_percent", 0.0)
                 control_end_percent = control_embeds.get("end_percent", 1.0)
             else:
-                if transformer.in_dim == 36: #fun inp
+                if transformer.in_dim in [148, 52]: #fun inp
                     mask_latents = torch.tile(
                         torch.zeros_like(noise[:1]), [4, 1, 1, 1]
                     )
@@ -2069,7 +2069,7 @@ class WanVideoSampler:
         
         # extra latents (Pusa) and 5b
         latents_to_insert = add_index = None
-        if (extra_latents := image_embeds.get("extra_latents", None)) is not None:
+        if (extra_latents := image_embeds.get("extra_latents", None)) is not None and transformer.multitalk_model_type.lower() != "infinitetalk":
             all_indices = []
             for entry in extra_latents:
                 add_index = entry["index"]
@@ -2725,6 +2725,15 @@ class WanVideoSampler:
                         latent_flipped = torch.flip(latent, dims=[1])
                         latent_model_input_flipped = latent_flipped.to(device)
 
+                    #InfiniteTalk first frame handling
+                    if (extra_latents is not None
+                        and not multitalk_sampling
+                        and transformer.multitalk_model_type=="InfiniteTalk"):
+                        for entry in extra_latents:
+                            add_index = entry["index"]
+                            num_extra_frames = entry["samples"].shape[2]
+                            latent[:, add_index:add_index+num_extra_frames] = entry["samples"].to(latent)
+
                     latent_model_input = latent.to(device)
 
                     current_step_percentage = idx / len(timesteps)
@@ -3002,6 +3011,8 @@ class WanVideoSampler:
                     #region multitalk
                     elif multitalk_sampling:
                         mode = image_embeds.get("multitalk_mode", "multitalk")
+                        if mode == "auto":
+                            mode = transformer.multitalk_model_type.lower()
                         log.info(f"Multitalk mode: {mode}")
                         original_images = cond_image = image_embeds.get("multitalk_start_image", None)
                         offload = image_embeds.get("force_offload", False)
@@ -3399,6 +3410,15 @@ class WanVideoSampler:
                                     **scheduler_step_args)[0].squeeze(0)
                                 latent_backwards = torch.flip(latent_backwards, dims=[1])
                                 latent = latent * 0.5 + latent_backwards * 0.5
+                        
+                        #InfiniteTalk first frame handling
+                        if (extra_latents is not None
+                            and not multitalk_sampling
+                            and transformer.multitalk_model_type=="InfiniteTalk"):
+                            for entry in extra_latents:
+                                add_index = entry["index"]
+                                num_extra_frames = entry["samples"].shape[2]
+                                latent[:, add_index:add_index+num_extra_frames] = entry["samples"].to(latent)
 
                         if freeinit_args is not None:
                             current_latent = latent.clone()
