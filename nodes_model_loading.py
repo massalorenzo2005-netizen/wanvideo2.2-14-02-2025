@@ -503,7 +503,7 @@ class WanVideoVACEModelSelect:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "vace_model": (folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' VACE model to use when not using model that has it included"}),
+                "vace_model": (folder_paths.get_filename_list("unet_gguf") + folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' VACE model to use when not using model that has it included"}),
             },
         }
 
@@ -835,7 +835,7 @@ class WanVideoModelLoader:
             if gguf:
                 if not vace_model["path"].endswith(".gguf"):
                     raise ValueError("With GGUF main model the VACE module must also be a GGUF quantized, if the main model already has VACE included, you can disconnect the VACE module loader")
-                vace_sd = load_gguf_checkpoint(model_path)
+                vace_sd = load_gguf_checkpoint(vace_model["path"])
             else:
                 vace_sd = load_torch_file(vace_model["path"], device=transformer_load_device, safe_load=True)
             sd.update(vace_sd)
@@ -1074,7 +1074,7 @@ class WanVideoModelLoader:
                 dtype = torch.float8_e5m2
             else:
                 dtype = base_dtype
-            params_to_keep = {"norm", "bias", "time_in", "patch_embedding", "time_", "img_emb", "modulation", "text_embedding", "adapter", "add", "ref_conv"}
+            params_to_keep = {"norm", "bias", "time_in", "patch_embedding", "time_", "img_emb", "modulation", "text_embedding", "adapter", "add", "ref_conv", "audio_proj"}
             if not lora_low_mem_load:
                 log.info("Using accelerate to load and assign model weights to device...")
                 param_count = sum(1 for _ in transformer.named_parameters())
