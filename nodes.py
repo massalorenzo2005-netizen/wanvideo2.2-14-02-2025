@@ -1736,6 +1736,7 @@ class WanVideoSampler:
         sample_scheduler = None
         if scheduler != "multitalk":
             sample_scheduler, timesteps, scheduler_step_args = get_scheduler(scheduler, steps, start_step, end_step, shift, device, transformer.dim, flowedit_args, denoise_strength, sigmas=sigmas, seed_g=seed_g)
+            log.info(f"scheduler: {scheduler} | shift: {shift}")
             log.info(f"sigmas: {sample_scheduler.sigmas}")
         else:
             timesteps = torch.tensor([1000, 750, 500, 250], device=device)
