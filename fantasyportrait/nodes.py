@@ -10,6 +10,7 @@ import comfy.model_management as mm
 from comfy.utils import load_torch_file, ProgressBar
 import folder_paths
 
+
 script_directory = os.path.dirname(os.path.abspath(__file__))
 device = mm.get_torch_device()
 offload_device = mm.unet_offload_device()
