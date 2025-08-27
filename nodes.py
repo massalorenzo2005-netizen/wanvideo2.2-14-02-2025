@@ -41,6 +41,7 @@ def offload_transformer(transformer):
     transformer.teacache_state.clear_all()
     transformer.magcache_state.clear_all()
     transformer.easycache_state.clear_all()
+    
     if transformer.patched_linear:
         for name, param in transformer.named_parameters():
             module = transformer
@@ -55,7 +56,6 @@ def offload_transformer(transformer):
                 pass
     else:
         transformer.to(offload_device)
-        
     mm.soft_empty_cache()
     gc.collect()
 
