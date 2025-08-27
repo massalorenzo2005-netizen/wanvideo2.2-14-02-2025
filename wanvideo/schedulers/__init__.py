@@ -9,8 +9,6 @@ from diffusers.schedulers import FlowMatchEulerDiscreteScheduler, DEISMultistepS
 import inspect
 from ...utils import log
 
-from .fm_solvers_euler import EulerScheduler
-
 scheduler_list = [
     "unipc", "unipc/beta",
     "dpm++", "dpm++/beta",
