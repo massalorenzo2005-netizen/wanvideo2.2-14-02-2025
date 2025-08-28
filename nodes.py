@@ -2813,57 +2813,6 @@ class WanVideoSampler:
                     text_embeds["prompt_embeds"] = positive_embeds
                     text_embeds["negative_prompt_embeds"] = negative_embeds
 
-                # Add padding for positive_embeds and negative_embeds when using CFG skimming
-                if use_cfg_skimming:
-                    tokens_align = True  # Internal parameter: True to align negative to positive length, False to pad both to 512
-                    # Determine target sequence length
-                    if tokens_align:
-                        first_positive_emb = positive_embeds[0]
-                        target_length = first_positive_emb.shape[0] if len(first_positive_emb.shape) == 2 else first_positive_emb.shape[1]
-                        del first_positive_emb  # Free memory
-                    else:
-                        target_length = 512  # Fixed length from T5 configuration
-
-                    # Process prompt_embeds in-place
-                    for i in range(len(positive_embeds)):
-                        emb = positive_embeds[i]
-                        embed_seq_len = 0
-                        if isinstance(emb, torch.Tensor):
-                            embed_seq_len = emb.shape[0] if len(emb.shape) == 2 else emb.shape[1]
-                            if embed_seq_len < target_length:
-                                padding = torch.zeros((target_length - embed_seq_len, emb.shape[-1]), dtype=emb.dtype, device=emb.device)
-                                if len(emb.shape) == 3:
-                                    padding = padding.unsqueeze(0)
-                                positive_embeds[i] = torch.cat([emb, padding], dim=0 if len(emb.shape) == 2 else 1)
-                                del padding  # Free memory
-                        if cs_verbose:
-                            if isinstance(emb, torch.Tensor):
-                                log.info(f"Padded prompt_embeds[{i}]: shape={list(positive_embeds[i].shape)}, mean={torch.mean(positive_embeds[i]).item():.4f}, sum={torch.sum(positive_embeds[i]).item():.4f}")
-                            else:
-                                log.info(f"prompt_embeds[{i}]: not a tensor, type={type(emb)}")
-
-                    # Process negative_prompt_embeds in-place
-                    for i in range(len(negative_embeds)):
-                        emb = negative_embeds[i]
-                        embed_seq_len = 0
-                        if isinstance(emb, torch.Tensor):
-                            embed_seq_len = emb.shape[0] if len(emb.shape) == 2 else emb.shape[1]
-                            if embed_seq_len < target_length:
-                                padding = torch.zeros((target_length - embed_seq_len, emb.shape[-1]), dtype=emb.dtype, device=emb.device)
-                                if len(emb.shape) == 3:
-                                    padding = padding.unsqueeze(0)
-                                negative_embeds[i] = torch.cat([emb, padding], dim=0 if len(emb.shape) == 2 else 1)
-                                del padding  # Free memory
-                        if cs_verbose:
-                            if isinstance(emb, torch.Tensor):
-                                log.info(f"Padded negative_prompt_embeds[{i}]: shape={list(negative_embeds[i].shape)}, mean={torch.mean(negative_embeds[i]).item():.4f}, sum={torch.sum(negative_embeds[i]).item():.4f}")
-                            else:
-                                log.info(f"negative_prompt_embeds[{i}]: not a tensor, type={type(emb)}")
-
-                    # Update text_embeds dictionary
-                    text_embeds["prompt_embeds"] = positive_embeds
-                    text_embeds["negative_prompt_embeds"] = negative_embeds
-
                 try:
                     if not batched_cfg:
                         #cond
