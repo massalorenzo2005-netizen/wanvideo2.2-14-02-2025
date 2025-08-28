@@ -6,6 +6,7 @@ from tqdm import tqdm
 import inspect
 import hashlib
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+
 from .wanvideo.modules.model import rope_params
 from .custom_linear import remove_lora_from_module, set_lora_params
 from .wanvideo.schedulers import get_scheduler, get_sampling_sigmas, retrieve_timesteps, scheduler_list
@@ -20,8 +21,8 @@ from .enhance_a_video.globals import set_enhance_weight, set_num_frames
 from .taehv import TAEHV
 from .CFGSkimming.skimming_utils import get_skimming_mask, skimmed_CFG
 from contextlib import nullcontext
-
 from einops import rearrange
+
 from comfy import model_management as mm
 from comfy.utils import ProgressBar, common_upscale
 from comfy.clip_vision import clip_preprocess, ClipVisionModel
@@ -1884,7 +1885,6 @@ class WanVideoSampler:
             log.info(f"sigmas: {sample_scheduler.sigmas}")
         else:
             timesteps = torch.tensor([1000, 750, 500, 250], device=device)
-
         total_steps = steps
         steps = len(timesteps)
 
@@ -2536,6 +2536,7 @@ class WanVideoSampler:
                 cs_verbose = skimming_args.get("verbose", False)
 
         # Rotary positional embeddings (RoPE)
+
         # RoPE base freq scaling as used with CineScale
         ntk_alphas = [1.0, 1.0, 1.0]
         if isinstance(rope_function, dict):
@@ -2754,7 +2755,7 @@ class WanVideoSampler:
                 }
 
                 batch_size = 1
-                
+
                 if not math.isclose(cfg_scale, 1.0):
                     if negative_embeds is None:
                         raise ValueError("Negative embeddings must be provided for CFG scale > 1.0")
@@ -2974,6 +2975,8 @@ class WanVideoSampler:
                         noise_pred_cond.view(batch_size, -1),
                         noise_pred_uncond.view(batch_size, -1)
                     ).view(batch_size, 1, 1, 1)
+                    
+                
                 noise_pred_uncond_scaled = noise_pred_uncond * alpha
 
                 if use_tangential:
@@ -3036,7 +3039,7 @@ class WanVideoSampler:
                 # RAAG (RATIO-aware Adaptive Guidance)
                 if raag_alpha > 0.0:
                     cfg_scale = get_raag_guidance(noise_pred_cond, noise_pred_uncond_scaled, cfg_scale, raag_alpha)
-                    log.info(f"RAAG modified cfg: {cfg_scale}")                
+                    log.info(f"RAAG modified cfg: {cfg_scale}")
 
                 #https://github.com/WikiChao/FreSca
                 if use_fresca:
@@ -3048,9 +3051,10 @@ class WanVideoSampler:
                     )
                     noise_pred = noise_pred_uncond_scaled + cfg_scale * filtered_cond * alpha
                 else:
-                    noise_pred = noise_pred_uncond_scaled + cfg_scale * (noise_pred_cond - noise_pred_uncond_scaled)         
+                    noise_pred = noise_pred_uncond_scaled + cfg_scale * (noise_pred_cond - noise_pred_uncond_scaled)
+                
 
-            return noise_pred, [cache_state_cond, cache_state_uncond]
+                return noise_pred, [cache_state_cond, cache_state_uncond]
 
         if args.preview_method in [LatentPreviewMethod.Auto, LatentPreviewMethod.Latent2RGB]: #default for latent2rgb
             from latent_preview import prepare_callback
