@@ -2955,25 +2955,6 @@ class WanVideoSampler:
 
                 return noise_pred, [cache_state_cond, cache_state_uncond]
 
-                # RAAG (RATIO-aware Adaptive Guidance)
-                if raag_alpha > 0.0:
-                    cfg_scale = get_raag_guidance(noise_pred_cond, noise_pred_uncond_scaled, cfg_scale, raag_alpha)
-                    log.info(f"RAAG modified cfg: {cfg_scale}")
-
-                # https://github.com/WikiChao/FreSca
-                if use_fresca:
-                    filtered_cond = fourier_filter(
-                        noise_pred_cond - noise_pred_uncond,
-                        scale_low=fresca_scale_low,
-                        scale_high=fresca_scale_high,
-                        freq_cutoff=fresca_freq_cutoff,
-                    )
-                    noise_pred = noise_pred_uncond_scaled + cfg_scale * filtered_cond * alpha
-                else:
-                    noise_pred = noise_pred_uncond_scaled + cfg_scale * (noise_pred_cond - noise_pred_uncond_scaled)
-
-                return noise_pred, [cache_state_cond, cache_state_uncond]
-
         if args.preview_method in [LatentPreviewMethod.Auto, LatentPreviewMethod.Latent2RGB]: #default for latent2rgb
             from latent_preview import prepare_callback
         else:

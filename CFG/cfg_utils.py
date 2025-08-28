@@ -9,7 +9,7 @@
 import torch
 import math
 from torchvision.transforms.functional import gaussian_blur
-from typing import Tuple
+from typing import Tuple, Union
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 @torch.no_grad()
 def get_skimming_mask(x_orig: torch.Tensor, cond: torch.Tensor, uncond: torch.Tensor,
                       cond_scale: float, return_denoised: bool = False,
-                      disable_flipping_filter: bool = False) -> torch.Tensor | Tuple[torch.Tensor, torch.Tensor]:
+                      disable_flipping_filter: bool = False) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     """
     Calculates a mask to identify tensor elements with high guidance influence.
 

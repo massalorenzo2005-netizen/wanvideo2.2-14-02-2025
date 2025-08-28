@@ -168,6 +168,13 @@ class AdvancedCFGArgs:
         "SSDT-CFG": "SSDTCFGArgs", "LSS-CFG": "LSSCFGArgs"
     }
 
+    def __init__(self):
+        """
+        Initializes the node and pre-computes the reverse mapping 
+        from node name to mode for efficient lookups.
+        """
+        self.NODE_TO_MODE_MAP = {v: k for k, v in self.MODE_TO_NODE_MAP.items()}
+
     @classmethod
     def INPUT_TYPES(cls):
         """Defines the inputs for the main controller node."""
@@ -194,7 +201,7 @@ class AdvancedCFGArgs:
                 final_args["enabled"] = False
                 return (final_args,)
         else:
-            mode = next((k for k, v in self.MODE_TO_NODE_MAP.items() if v == node_name), None)
+            mode = self.NODE_TO_MODE_MAP.get(node_name)
             if not mode:
                 log.warning(f"AdvancedCFGArgs: Connected node '{node_name}' is not recognized. The effect will be bypassed.")
                 final_args["enabled"] = False
