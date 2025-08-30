@@ -1613,87 +1613,210 @@ class WanVideoFreeInitArgs:
     def process(self, **kwargs):
         return (kwargs,)
     
-class WanVideoScheduler: #WIP
-    @classmethod
-    def INPUT_TYPES(s):
-        return {"required": {
-                "scheduler": (scheduler_list, {"default": "unipc"}),
-                "steps": ("INT", {"default": 30, "min": 1, "tooltip": "Number of steps for the scheduler"}),
-                "shift": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
-                "start_step": ("INT", {"default": 0, "min": 0, "tooltip": "Starting step for the scheduler"}),
-                "end_step": ("INT", {"default": -1, "min": -1, "tooltip": "Ending step for the scheduler"})
-            },
-            "optional": {
-                "sigmas": ("SIGMAS", ),
-            },
-            "hidden": {
-                "unique_id": "UNIQUE_ID",
-            },
-        }
-
-    RETURN_TYPES = ("SIGMAS", "INT", "FLOAT", scheduler_list, "INT", "INT",)
-    RETURN_NAMES = ("sigmas", "steps", "shift", "scheduler", "start_step", "end_step")
-    FUNCTION = "process"
+# WIP
+class WanVideoSchedulerPlotSettings:
+    """
+    A node to configure settings for the Timestamps plot. It allows enabling/disabling
+    the plot, setting its dimensions, and toggling a logarithmic scale.
+    """
     CATEGORY = "WanVideoWrapper"
+    FUNCTION = "get_settings"
+    RETURN_TYPES = ("PLOT_SETTINGS",)
+    DESCRIPTION = "Configure settings for the Timestamps plot, such as size and scale."
     EXPERIMENTAL = True
 
-    def process(self, scheduler, steps, start_step, end_step, shift, unique_id, sigmas=None):
-        sample_scheduler, timesteps, start_idx, end_idx = get_scheduler(
-            scheduler, 
-            steps, 
-            start_step, end_step, shift, 
-            device, 
-            sigmas=sigmas)
-        
-        scheduler_dict = {
-            "sample_scheduler": sample_scheduler,
-            "timesteps": timesteps,
+    @classmethod
+    def INPUT_TYPES(cls):
+        """Defines the input types for the node."""
+        return {
+            "required": {
+                "enabled": ("BOOLEAN", {
+                    "default": True, "label_on": "on", "label_off": "off",
+                    "tooltip": "Enable or disable the generation of the plot."
+                }),
+                "log_scale": ("BOOLEAN", {
+                    "default": False, "label_on": "on", "label_off": "off",
+                    "tooltip": "Use a logarithmic scale for the Y-axis of the plot."
+                }),
+                "width": ("INT", {
+                    "default": 8, "min": 1, "max": 40, "step": 1, "display": "slider",
+                    "tooltip": "Set the width of the plot in inches."
+                }),
+                "height": ("INT", {
+                    "default": 5, "min": 1, "max": 25, "step": 1, "display": "slider",
+                    "tooltip": "Set the height of the plot in inches."
+                }),
+            }
         }
 
+    def get_settings(self, enabled, log_scale, width, height):
+        """
+        Packages the settings into a dictionary for other nodes to use.
+
+        Args:
+            enabled (bool): Whether to generate the plot.
+            log_scale (bool): Whether to use a logarithmic scale on the Y-axis.
+            width (int): The width of the plot in inches.
+            height (int): The height of the plot in inches.
+
+        Returns:
+            tuple: A tuple containing the plot settings dictionary.
+        """
+        settings = {
+            "enabled": enabled,
+            "log_scale": log_scale,
+            "width": width,
+            "height": height,
+        }
+        return (settings,)
+    
+#WIP
+class WanVideoScheduler: 
+    """
+    A scheduler node that visualizes the timestep distribution.
+    Allows for advanced schedule slicing by absolute step or by a sigma value threshold.
+    """
+    CATEGORY = "WanVideoWrapper"
+    FUNCTION = "process"
+    RETURN_TYPES = ("SIGMAS", "INT", "FLOAT", scheduler_list, "INT", "INT",)
+    RETURN_NAMES = ("sigmas", "steps", "shift", "scheduler", "start_step", "end_step")
+    DESCRIPTION = "Create a scheduler and visualize its timesteps. Allows slicing by absolute step (end_step) or sigma threshold (end_at_sigma)."
+    EXPERIMENTAL = True
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        """Defines the input types for the node."""
+        return {
+            "required": {
+                "scheduler": (scheduler_list, {"default": "unipc"}),
+                "steps": ("INT", {"default": 30, "min": 1, "tooltip": "Total number of steps"}),
+                "shift": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
+                "start_step": ("INT", {"default": 0, "min": 0, "tooltip": "Absolute starting step"}),
+                "end_step": ("INT", {"default": -1, "min": -1, "tooltip": "Absolute ending step. Ignored if end_at_sigma is >= 0."}),
+                "end_at_sigma": ("FLOAT", {"default": -1.0, "min": -1.0, "max": 2000.0, "step": 0.001, "tooltip": "If >= 0, ends schedule when sigma drops below this value. Overrides end_step."}),
+            },
+            "optional": {
+                "sigmas": ("SIGMAS",),
+                "plot_settings": ("PLOT_SETTINGS",)
+            },
+            "hidden": {"unique_id": "UNIQUE_ID"},
+        }
+
+    def _generate_plot(self, unique_id, sample_scheduler, start_idx, end_idx, plot_settings=None):
+        """
+        Generates and sends a plot of the timesteps to the server if enabled.
+
+        Args:
+            unique_id (str): The unique identifier for the server prompt.
+            timesteps (torch.Tensor): The tensor of timesteps for plotting.
+            start_idx (int): The starting step index to visualize as a vertical line.
+            end_idx (int): The ending step index to visualize as a vertical line.
+            plot_settings (dict, optional): A dictionary of plot settings.
+        """
         try:
             from server import PromptServer
             import io
             import base64
             import matplotlib.pyplot as plt
-        except:
+        except ImportError:
             PromptServer = None
-        if unique_id and PromptServer is not None:
-            try:
-                # Plot sigmas and save to a buffer
-                sigmas_np = sample_scheduler.full_sigmas[:-1].cpu().numpy()
-                buf = io.BytesIO()
-                fig = plt.figure(facecolor='#353535')
-                ax = fig.add_subplot(111)
-                ax.set_facecolor('#353535')  # Set axes background color
-                ax.plot(sigmas_np)
-                ax.set_title("Sigmas", color='white')           # Title font color
-                ax.set_xlabel("Step", color='white')            # X label font color
-                ax.set_ylabel("Sigma Value", color='white')     # Y label font color
-                ax.tick_params(axis='x', colors='white')        # X tick color
-                ax.tick_params(axis='y', colors='white')        # Y tick color
-                # Add split point if end_step is defined
-                if end_idx != -1 and 0 <= end_idx < len(sigmas_np):
-                    ax.axvline(end_idx, color='red', linestyle='--', linewidth=2, label='end_step split')
-                # Add split point if start_step is defined
-                if start_idx > 0 and 0 <= start_idx < len(sigmas_np):
-                    ax.axvline(start_idx, color='green', linestyle='--', linewidth=2, label='start_step split')
-                if (end_idx != -1 and 0 <= end_idx < len(sigmas_np)) or (start_idx > 0 and 0 <= start_idx < len(sigmas_np)):
-                    ax.legend()
-                plt.tight_layout()
-                plt.savefig(buf, format='png')
-                plt.close(fig)
-                buf.seek(0)
-                img_base64 = base64.b64encode(buf.read()).decode('utf-8')
-                buf.close()
 
-                # Send as HTML img tag with base64 data
-                html_img = f"<img src='data:image/png;base64,{img_base64}' alt='Sigmas Plot' style='max-width:100%; height:100%; overflow:hidden; display:block;'>"
-                PromptServer.instance.send_progress_text(html_img, unique_id)
-            except Exception as e:
-                print("Failed to send sigmas plot:", e)
-                pass
+        if not unique_id or not hasattr(PromptServer, 'instance') or PromptServer.instance is None:
+            return
 
-        return (sigmas, steps, shift, scheduler_dict, start_step, end_step)
+        default_settings = {"enabled": True, "width": 8, "height": 5, "log_scale": False}
+        if plot_settings:
+            default_settings.update(plot_settings)
+        
+        if not default_settings["enabled"]:
+            return
+
+        try:
+            data_to_plot = sample_scheduler.full_sigmas[:-1].cpu().numpy()
+            title, y_label = "Sigmas", "Sigma Value"
+
+            fig = plt.figure(figsize=(default_settings["width"], default_settings["height"]), facecolor='#353535')
+            ax = fig.add_subplot(111)
+            ax.set_facecolor('#353535') # Set axes background color
+            ax.plot(data_to_plot, label=y_label)
+
+            if default_settings["log_scale"]:
+                ax.set_yscale('log')
+
+            ax.set_title(title, color='white') # Title font color
+            ax.set_xlabel("Step", color='white') # X label font color
+            ax.set_ylabel(y_label, color='white') # Y label font color
+            ax.tick_params(axis='x', colors='white') # X tick color
+            ax.tick_params(axis='y', colors='white') # Y tick color
+
+            # Add split point if end_step is defined
+            if end_idx != -1 and 0 <= end_idx < len(data_to_plot):
+                ax.axvline(end_idx, color='red', linestyle='--', linewidth=2, label='step split')
+            # Add split point if start_step is defined    
+            if start_idx > 0 and 0 <= start_idx < len(data_to_plot):
+                ax.axvline(start_idx, color='green', linestyle='--', linewidth=2, label='step split')
+            if (end_idx != -1 and 0 <= end_idx < len(data_to_plot)) or (start_idx > 0 and 0 <= start_idx < len(data_to_plot)):
+                    ax.legend(facecolor='#555555', labelcolor='white')    
+
+            plt.tight_layout()
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            plt.close(fig)
+            buf.seek(0)
+            img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+
+            html_img = f"<img src='data:image/png;base64,{img_base64}' alt='{title} Plot' style='max-width:100%; height:auto;'>"
+            PromptServer.instance.send_progress_text(html_img, unique_id)
+
+        except Exception as e:
+            print(f"Failed to generate or send plot: {e}")
+
+    def process(self, scheduler, steps, start_step, end_step, shift, end_at_sigma, unique_id, sigmas=None, plot_settings=None):
+        """
+        Processes scheduler settings, slicing the schedule by step or sigma value.
+        """
+        calculated_end_step = end_step
+
+        if end_at_sigma >= 0.0:
+            # Sigma cutoff mode has priority.
+            # First, generate the full, unsliced schedule to get all sigma values.
+            full_scheduler, _, _, _ = get_scheduler(
+                scheduler, steps, 0, -1, shift, device, sigmas=sigmas
+            )
+            
+            # Find the step (index) where the sigma value drops below the threshold.
+            full_sigmas = full_scheduler.full_sigmas
+            indices = (full_sigmas < end_at_sigma).nonzero(as_tuple=True)[0]
+            
+            if len(indices) > 0:
+                # The first index where sigma is less than the cutoff value becomes our new end_step.
+                calculated_end_step = indices[0].item()
+            else:
+                # If the condition is never met, it means all sigmas are above the cutoff.
+                # In this case, run the full schedule.
+                calculated_end_step = -1
+        
+        if calculated_end_step == 0:
+            raise ValueError("end_step cannot be 0 as it would result in an empty schedule")
+        
+        # Generate the final, potentially sliced schedule using the determined end_step.
+        sample_scheduler, timesteps, start_idx, end_idx = get_scheduler(
+            scheduler, steps, start_step, calculated_end_step, shift, device, sigmas=sigmas
+        )
+
+        # Adjust end_idx by +1 when calculated_end_step is not -1 to align the split line with the intended step (consistent with end_at_sigma logic)
+        if calculated_end_step != -1:
+            end_idx += 1
+        
+        if calculated_end_step == -1 or (calculated_end_step != -1 and calculated_end_step > steps):
+            end_idx = -1
+
+        scheduler_dict = {"sample_scheduler": sample_scheduler, "timesteps": timesteps}
+        
+        # We plot the timesteps from the *final, sliced* schedule.
+        self._generate_plot(unique_id, sample_scheduler, start_idx, end_idx, plot_settings)
+        
+        return (sigmas, steps, shift, scheduler_dict, start_step, calculated_end_step)
 
 rope_functions = ["default", "comfy", "comfy_chunked"]
 class WanVideoRoPEFunction:
@@ -1734,7 +1857,7 @@ class WanVideoSampler:
                 "model": ("WANVIDEOMODEL",),
                 "image_embeds": ("WANVIDIMAGE_EMBEDS", ),
                 "steps": ("INT", {"default": 30, "min": 1}),
-                "cfg": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 30.0, "step": 0.01}),
+                "cfg": ("FLOAT", {"default": 6.0, "min": 0.0, "max": 100.0, "step": 0.01}),
                 "shift": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 1000.0, "step": 0.01}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "force_offload": ("BOOLEAN", {"default": True, "tooltip": "Moves the model to the offload device after sampling"}),
@@ -1853,6 +1976,7 @@ class WanVideoSampler:
             log.info(f"sigmas: {sample_scheduler.sigmas}")
         else:
             timesteps = torch.tensor([1000, 750, 500, 250], device=device)
+        log.info(f"timesteps: {timesteps}")
         total_steps = steps
         steps = len(timesteps)
 
@@ -2746,12 +2870,7 @@ class WanVideoSampler:
                                     padding = padding.unsqueeze(0)
                                 positive_embeds[i] = torch.cat([emb, padding], dim=0 if len(emb.shape) == 2 else 1)
                                 del padding  # Free memory
-                        if cfg_args.get("verbose", False):
-                            if isinstance(emb, torch.Tensor):
-                                log.info(f"Padded prompt_embeds[{i}]: shape={list(positive_embeds[i].shape)}, mean={torch.mean(positive_embeds[i]).item():.4f}, sum={torch.sum(positive_embeds[i]).item():.4f}")
-                            else:
-                                log.info(f"prompt_embeds[{i}]: not a tensor, type={type(emb)}")
-
+                      
                     # Process negative_prompt_embeds in-place
                     for i in range(len(negative_embeds)):
                         emb = negative_embeds[i]
@@ -2764,11 +2883,6 @@ class WanVideoSampler:
                                     padding = padding.unsqueeze(0)
                                 negative_embeds[i] = torch.cat([emb, padding], dim=0 if len(emb.shape) == 2 else 1)
                                 del padding  # Free memory
-                        if cfg_args.get("verbose", False):
-                            if isinstance(emb, torch.Tensor):
-                                log.info(f"Padded negative_prompt_embeds[{i}]: shape={list(negative_embeds[i].shape)}, mean={torch.mean(negative_embeds[i]).item():.4f}, sum={torch.sum(negative_embeds[i]).item():.4f}")
-                            else:
-                                log.info(f"negative_prompt_embeds[{i}]: not a tensor, type={type(emb)}")
 
                     # Update text_embeds dictionary
                     text_embeds["prompt_embeds"] = positive_embeds
@@ -2907,6 +3021,7 @@ class WanVideoSampler:
                         uncond_sum_before = torch.sum(noise_pred_uncond_scaled).item()
 
                         log.info(f"--- Advanced CFG '{mode}' ({details_str}) [Step {idx}] ---")
+                        log.info(f"--- Current sampler CFG: {cfg_scale} ---")
                         log.info(f"Before: cond_mean={cond_mean_before:.4f}, uncond_mean={uncond_mean_before:.4f}")
                         log.info(f"        cond_sum={cond_sum_before:.4f}, uncond_sum={uncond_sum_before:.4f}")
 
@@ -4132,6 +4247,7 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoAddMTVMotion": WanVideoAddMTVMotion,
     "WanVideoRoPEFunction": WanVideoRoPEFunction,
     "WanVideoSchedulerList": WanVideoSchedulerList,
+    "WanVideoSchedulerPlotSettings": WanVideoSchedulerPlotSettings,
     }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoSampler": "WanVideo Sampler",
@@ -4166,5 +4282,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoAddControlEmbeds": "WanVideo Add Control Embeds",
     "WanVideoAddMTVMotion": "WanVideo MTV Crafter Motion",
     "WanVideoRoPEFunction": "WanVideo RoPE Function",
+    "WanVideoScheduler": "WanVideo Scheduler (BETA)",
+    "WanVideoSchedulerPlotSettings": "WanVideo Scheduler Plot Settings (BETA)",
     "WanVideoSchedulerList": "WanVideo Scheduler Selector",
     }

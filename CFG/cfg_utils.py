@@ -401,10 +401,13 @@ def get_cfg_log_details(cfg_args: dict) -> str:
     details = []
 
     try:
-        if mode in ["Single Scale", "Replace", "Linear Interpolation", "Linear Interpolation Dual Scales"]:
-            details.append(f"skim_cfg={cfg_args.get('Skimming_CFG'):.2f}")
-            if mode == "Linear Interpolation Dual Scales":
-                details.append(f"skim_cfg_neg={cfg_args.get('Skimming_CFG_negative'):.2f}")
+        if mode in ["Single Scale", "Linear Interpolation", "Linear Interpolation Dual Scales"]:
+            details.append(f"Skimming CFG={cfg_args.get('Skimming_CFG'):.2f}")
+            if mode == "Single Scale":
+                details.append(f"Full skimm negative={cfg_args.get('full_skim_negative')}")
+                details.append(f"Disable fliping filter={cfg_args.get('disable_flipping_filter')}")
+            elif mode == "Linear Interpolation Dual Scales":
+                details.append(f"Skimming CFG negative=: {cfg_args.get('Skimming_CFG_negative', 0.0):.2f}")
         elif mode == "AMI-CFG":
             details.append(f"alpha_base={cfg_args.get('alpha_base'):.2f}")
             details.append(f"power={cfg_args.get('power'):.1f}")
