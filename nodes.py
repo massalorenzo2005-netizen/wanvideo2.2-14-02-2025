@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 import inspect
 import copy
+from PIL import Image
 import hashlib
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
@@ -27,7 +28,7 @@ from einops import rearrange
 from .CFG.cfg_utils import dispatch_cfg_modification, get_cfg_log_details, apply_ssdt_dynamic_thresholding
 
 from comfy import model_management as mm
-from comfy.utils import ProgressBar, common_upscale
+from comfy.utils import ProgressBar, common_upscale, load_torch_file
 from comfy.clip_vision import clip_preprocess, ClipVisionModel
 from comfy.cli_args import args, LatentPreviewMethod
 import folder_paths
@@ -549,10 +550,13 @@ class WanVideoTextEncodeSingle:
             raise ValueError("No cached text embeds found for prompts, please provide a T5 encoder.")
 
         if encoded is None:
-            if model_to_offload is not None and device == "gpu":
-                log.info(f"Moving video model to {offload_device}")
-                model_to_offload.model.to(offload_device)
-                mm.soft_empty_cache()
+            try:
+                if model_to_offload is not None and device == "gpu":
+                    log.info(f"Moving video model to {offload_device}")
+                    model_to_offload.model.to(offload_device)
+                    mm.soft_empty_cache()
+            except:
+                pass
 
             encoder = t5["model"]
             dtype = t5["dtype"]
@@ -1263,6 +1267,29 @@ class WanVideoAddControlEmbeds:
 
         updated = dict(embeds)
         updated["control_embeds"] = new_entry
+
+        return (updated,)
+    
+class WanVideoAddPusaNoise:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required": {
+            "embeds": ("WANVIDIMAGE_EMBEDS",),
+            "noise_multipliers": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 100.0, "step": 0.01, "tooltip": "Noise multipliers for Pusa, can be a list of floats"}),
+            "noisy_steps": ("INT", {"default": -1, "min": -1, "max": 1000, "tooltip": "Number steps to apply the extra noise"}),
+            },
+        }
+
+    RETURN_TYPES = ("WANVIDIMAGE_EMBEDS", )
+    RETURN_NAMES = ("image_embeds",)
+    FUNCTION = "add"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Adds latent and timestep noise multipliers when using flowmatch_pusa"
+
+    def add(self, embeds, noise_multipliers, noisy_steps):
+        updated = dict(embeds)
+        updated["pusa_noise_multipliers"] = noise_multipliers
+        updated["pusa_noisy_steps"] = noisy_steps
 
         return (updated,)
     
@@ -2029,9 +2056,7 @@ class WanVideoSampler:
         #I2V
         image_cond = image_embeds.get("image_embeds", None)
         if image_cond is not None:
-            if is_pusa:
-                image_cond_mask = image_embeds.get("mask", None)
-            elif transformer.in_dim == 16:
+            if transformer.in_dim == 16:
                 raise ValueError("T2V (text to video) model detected, encoded images only work with I2V (Image to video) models")
             elif transformer.in_dim not in [48, 32]: # fun 2.1 models don't use the mask
                 image_cond_mask = image_embeds.get("mask", None)
@@ -2257,7 +2282,7 @@ class WanVideoSampler:
                 if random_ref_dwpose is not None:
                     random_ref_dwpose_data = transformer.randomref_embedding_pose(
                         random_ref_dwpose.to(device, dtype)
-                        ).unsqueeze(2).to(model["dtype"]) # [1, 20, 104, 60]
+                        ).unsqueeze(2).to(dtype) # [1, 20, 104, 60]
                 del random_ref_dwpose
                 
             unianim_data = {
@@ -2455,22 +2480,20 @@ class WanVideoSampler:
                 ).repeat(1, noise.shape[0], 1, 1, 1)
         
         # extra latents (Pusa) and 5b
-        latents_to_insert = add_index = None
+        latents_to_insert = add_index = noise_multipliers = None
         extra_latents = image_embeds.get("extra_latents", None)
-        if extra_latents is None:
-            if image_cond is not None and is_pusa: # get images for pusa if I2V node is used
-                extra_latents = image_cond
-                # Find indices where mask is 1
-                all_indices = torch.where(image_cond_mask[:, :, 0, 0].any(dim=0))[0].tolist()
-                num_extra_frames = len(all_indices)
-                if start_step == 0:
-                    for idx in all_indices:
-                        noise[:, idx] = extra_latents[:, idx].to(noise)
-                        log.info(f"Adding extra sample to latent index {idx}")
-                image_cond = None
-        elif extra_latents is not None and transformer.multitalk_model_type.lower() != "infinitetalk":
-            all_indices = []
-            for entry in extra_latents:
+        all_indices = []
+        noise_multiplier_list = image_embeds.get("pusa_noise_multipliers", None)
+        if noise_multiplier_list is not None:
+            if len(noise_multiplier_list) != latent_video_length:
+                noise_multipliers = torch.zeros(latent_video_length)
+            else:
+                noise_multipliers = torch.tensor(noise_multiplier_list)
+                log.info(f"Using Pusa noise multipliers: {noise_multipliers}")
+        if extra_latents is not None and transformer.multitalk_model_type.lower() != "infinitetalk":
+            if noise_multiplier_list is not None:
+                noise_multiplier_list = list(noise_multiplier_list) + [1.0] * (len(all_indices) - len(noise_multiplier_list))
+            for i, entry in enumerate(extra_latents):
                 add_index = entry["index"]
                 num_extra_frames = entry["samples"].shape[2]
                 # Handle negative indices
@@ -2481,6 +2504,10 @@ class WanVideoSampler:
                     noise[:, add_index:add_index+num_extra_frames] = entry["samples"].to(noise)
                     log.info(f"Adding extra samples to latent indices {add_index} to {add_index+num_extra_frames-1}")
                 all_indices.extend(range(add_index, add_index+num_extra_frames))
+            if noise_multipliers is not None and len(noise_multiplier_list) != latent_video_length:
+                for i, idx in enumerate(all_indices):
+                    noise_multipliers[idx] = noise_multiplier_list[i]
+                log.info(f"Using Pusa noise multipliers: {noise_multipliers}")
 
         latent = noise.to(device)
 
@@ -3243,6 +3270,10 @@ class WanVideoSampler:
             # Set latent for denoising
             latent = current_latent
 
+            if is_pusa and all_indices:
+                pusa_noisy_steps = image_embeds.get("pusa_noisy_steps", -1)
+                if pusa_noisy_steps == -1:
+                    pusa_noisy_steps = len(timesteps)
             try:
                 pbar = ProgressBar(len(timesteps))
                 #region main loop start
@@ -3269,11 +3300,28 @@ class WanVideoSampler:
                     current_step_percentage = idx / len(timesteps)
 
                     timestep = torch.tensor([t]).to(device)
-                    if is_pusa or (is_5b and 'all_indices' in locals()):
+                    if is_pusa or (is_5b and all_indices):
                         orig_timestep = timestep
                         timestep = timestep.unsqueeze(1).repeat(1, latent_video_length)
                         if extra_latents is not None:
-                            if 'all_indices' in locals() and all_indices:
+                            if all_indices and noise_multipliers is not None:
+                                if is_pusa:
+                                    scheduler_step_args["cond_frame_latent_indices"] = all_indices
+                                    scheduler_step_args["noise_multipliers"] = noise_multipliers
+                                for latent_idx in all_indices:
+                                    timestep[:, latent_idx] = timestep[:, latent_idx] * noise_multipliers[latent_idx]
+                                    # add noise for conditioning frames if multiplier > 0
+                                    if idx < pusa_noisy_steps and noise_multipliers[latent_idx] > 0:
+                                        latent_size = (1, latent.shape[0], latent.shape[1], latent.shape[2], latent.shape[3])
+                                        noise_for_cond = torch.randn(latent_size, generator=seed_g, device=torch.device("cpu"))
+                                        timestep_cond = torch.ones_like(timestep) * timestep.max()
+                                        if is_pusa:
+                                            latent[:, latent_idx:latent_idx+1] = sample_scheduler.add_noise_for_conditioning_frames(
+                                                latent[:, latent_idx:latent_idx+1].to(device),
+                                                noise_for_cond[:, :, latent_idx:latent_idx+1].to(device),
+                                                timestep_cond[:, latent_idx:latent_idx+1].to(device),
+                                                noise_multiplier=noise_multipliers[latent_idx])
+                            else:
                                 timestep[:, all_indices] = 0
                             #print("timestep: ", timestep)
 
@@ -3569,6 +3617,7 @@ class WanVideoSampler:
                         log.info(f"Multitalk mode: {mode}")
                         cond_frame = None
                         offload = image_embeds.get("force_offload", False)
+                        offloaded = False
                         tiled_vae = image_embeds.get("tiled_vae", False)
                         frame_num = clip_length = image_embeds.get("num_frames", 81)
                         vae = image_embeds.get("vae", None)
@@ -3582,6 +3631,9 @@ class WanVideoSampler:
                         original_images = cond_image = image_embeds.get("multitalk_start_image", None)
                         if original_images is None:
                             original_images = torch.zeros([noise.shape[0], 1, target_h, target_w], device=device)
+
+                        output_path = image_embeds.get("output_path", "")
+                        img_counter = 0
 
                         if len(multitalk_embeds['audio_features'])==2 and (multitalk_embeds['ref_target_masks'] is None):
                             face_scale = 0.1
@@ -3621,9 +3673,21 @@ class WanVideoSampler:
                                 "end": uni3c_embeds["end"],
                             }
 
+                        encoded_silence = None
+                       
+                        try:
+                            silence_path = os.path.join(script_directory, "multitalk", "encoded_silence.safetensors")
+                            encoded_silence = load_torch_file(silence_path)["audio_emb"].to(dtype)
+                        except:
+                             log.warning("No encoded silence file found, padding with end of audio embedding instead.")
+
                         total_frames = len(audio_embedding[0])
                         estimated_iterations = total_frames // (frame_num - motion_frame) + 1
                         callback = prepare_callback(patcher, estimated_iterations)
+
+                        if frame_num >= total_frames:
+                            arrive_last_frame = True
+                            estimated_iterations = 1
 
                         log.info(f"Sampling {total_frames} frames in {estimated_iterations} windows, at {latent.shape[3]*vae_upscale_factor}x{latent.shape[2]*vae_upscale_factor} with {steps} steps")
 
@@ -3745,11 +3809,16 @@ class WanVideoSampler:
                                 add_latent = add_noise(latent_motion_frames, motion_add_noise, timesteps[0])
                                 latent[:, :add_latent.shape[1]] = add_latent
 
-                            if offload:
+                            if offloaded:
+                                # Load weights
+                                if transformer.patched_linear and gguf_reader is None:
+                                    load_weights(patcher.model.diffusion_model, patcher.model["sd"], weight_dtype, base_dtype=dtype, transformer_load_device=device, block_swap_args=block_swap_args)
+                                elif gguf_reader is not None: #handle GGUF
+                                    load_weights(transformer, patcher.model["sd"], base_dtype=dtype, transformer_load_device=device, patcher=patcher, gguf=True, reader=gguf_reader, block_swap_args=block_swap_args)
+
                                 #blockswap init
                                 if not transformer.patched_linear:
                                     if block_swap_args is not None:
-                                        transformer.use_non_blocking = block_swap_args.get("use_non_blocking", False)
                                         for name, param in transformer.named_parameters():
                                             if "block" not in name:
                                                 param.data = param.data.to(device)
@@ -3898,6 +3967,7 @@ class WanVideoSampler:
                             del noise, latent_motion_frames
                             if offload:
                                 offload_transformer(transformer)
+                                offloaded = True
                             vae.to(device)
                             videos = vae.decode(latent.unsqueeze(0).to(device, vae.dtype), device=device, tiled=tiled_vae, pbar=False)[0].cpu()
                             vae.model.clear_cache()
@@ -3920,7 +3990,17 @@ class WanVideoSampler:
                         
                                 videos = torch.stack(cm_result_list, dim=0).permute(3, 0, 1, 2)
 
-                            # cache generated samples
+                            # optionally save generated samples to disk
+                            if output_path:
+                                video_np = videos.clamp(-1.0, 1.0).add(1.0).div(2.0).mul(255).cpu().float().numpy().transpose(1, 2, 3, 0).astype('uint8')
+                                num_frames_to_save = video_np.shape[0] if is_first_clip else video_np.shape[0] - cur_motion_frames_num
+                                log.info(f"Saving {num_frames_to_save} generated frames to {output_path}")
+                                start_idx = 0 if is_first_clip else cur_motion_frames_num
+                                for i in range(start_idx, video_np.shape[0]):
+                                    im = Image.fromarray(video_np[i])
+                                    im.save(os.path.join(output_path, f"frame_{img_counter:05d}.png"))
+                                    img_counter += 1
+                                
                             gen_video_list.append(videos if is_first_clip else videos[:, cur_motion_frames_num:])
 
                             current_condframe_index += 1
@@ -3954,9 +4034,14 @@ class WanVideoSampler:
                                         source_frame = len(audio_embedding[human_inx])
                                         source_frames.append(source_frame)
                                         if audio_end_idx >= len(audio_embedding[human_inx]):
-                                            miss_length   = audio_end_idx - len(audio_embedding[human_inx]) + 3 
-                                            add_audio_emb = torch.flip(audio_embedding[human_inx][-1*miss_length:], dims=[0])
-                                            audio_embedding[human_inx] = torch.cat([audio_embedding[human_inx], add_audio_emb], dim=0)
+                                            print(f"Audio embedding for subject {human_inx} not long enough: {len(audio_embedding[human_inx])}, need {audio_end_idx}, padding...")
+                                            miss_length = audio_end_idx - len(audio_embedding[human_inx]) + 3
+                                            print(f"Padding length: {miss_length}")
+                                            if encoded_silence is not None:
+                                                add_audio_emb = encoded_silence[-1*miss_length:]
+                                            else:
+                                                add_audio_emb = torch.flip(audio_embedding[human_inx][-1*miss_length:], dims=[0])
+                                            audio_embedding[human_inx] = torch.cat([audio_embedding[human_inx], add_audio_emb.to(device, dtype)], dim=0)
                                             miss_lengths.append(miss_length)
                                         else:
                                             miss_lengths.append(0)
@@ -4520,6 +4605,7 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoAddControlEmbeds": WanVideoAddControlEmbeds,
     "WanVideoAddMTVMotion": WanVideoAddMTVMotion,
     "WanVideoRoPEFunction": WanVideoRoPEFunction,
+    "WanVideoAddPusaNoise": WanVideoAddPusaNoise
     "WanVideoSchedulerList": WanVideoSchedulerList,
     "WanVideoSchedulerPlotSettings": WanVideoSchedulerPlotSettings,
     }
@@ -4557,7 +4643,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoAddControlEmbeds": "WanVideo Add Control Embeds",
     "WanVideoAddMTVMotion": "WanVideo MTV Crafter Motion",
     "WanVideoRoPEFunction": "WanVideo RoPE Function",
+    "WanVideoAddPusaNoise": "WanVideo Add Pusa Noise",
     "WanVideoScheduler": "WanVideo Scheduler (BETA)",
     "WanVideoSchedulerPlotSettings": "WanVideo Scheduler Plot Settings (BETA)",
     "WanVideoSchedulerList": "WanVideo Scheduler Selector",
-    }
+}
