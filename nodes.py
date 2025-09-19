@@ -1204,6 +1204,13 @@ class WanVideoAnimateEmbeds:
                 ref_mask[:, :num_refs] = 1
             ref_mask_mask_repeated = torch.repeat_interleave(ref_mask[:, 0:1], repeats=4, dim=1) # T, C, H, W
             ref_mask = torch.cat([ref_mask_mask_repeated, ref_mask[:, 1:]], dim=1)
+            
+            # Ensure frame count is divisible by 4 before reshaping
+            frames_to_use = (ref_mask.shape[1] // 4) * 4
+            if frames_to_use < ref_mask.shape[1]:
+                log.info(f"WanAnimate: Trimming ref_mask from {ref_mask.shape[1]} to {frames_to_use} frames to ensure divisibility by 4")
+                ref_mask = ref_mask[:, :frames_to_use]
+            
             ref_mask = ref_mask.view(1, ref_mask.shape[1] // 4, 4, lat_h, lat_w) # 1, T, C, H, W
             ref_mask = ref_mask.movedim(1, 2)[0]# C, T, H, W
 
