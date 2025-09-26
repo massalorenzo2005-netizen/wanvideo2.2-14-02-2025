@@ -102,7 +102,7 @@ export function drawNumberWidgetPart(ctx, options) {
     if (textColor) {
         ctx.fillStyle = textColor;
     }
-    ctx.fillText(fitString(ctx, value.toFixed(2), numberWidth), posX + numberWidth / 2, midY);
+    ctx.fillText(fitString(ctx, value.toFixed(3), numberWidth), posX + numberWidth / 2, midY);
     ctx.fillStyle = oldTextcolor;
     xBoundsNumber[0] = posX;
     xBoundsNumber[1] = numberWidth;
