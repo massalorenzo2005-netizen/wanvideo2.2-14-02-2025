@@ -678,13 +678,18 @@ class WanVideoPowerLoraLoader:
                 # Check if JavaScript detected a low variant for this LoRA
                 is_low = value.get('is_low', False)
                 low_variant_name = value.get('low_variant_name')
+                low_strength_model = value.get('low_strength', strength_model)  # Use low_strength if available
                 print(f"[WanVideoPowerLoraLoader] LoRA '{lora_name}' is_low flag: {is_low}, low_variant_name: {low_variant_name}")
 
                 if is_low and low_variant_name:
-                    # Create entry for the low variant LoRA
+                    # Round low strength values to avoid floating point precision issues
+                    low_strength_model = round(low_strength_model, 4) if not isinstance(low_strength_model, list) else low_strength_model
+                    low_strength_clip = low_strength_model  # For now, use same value for clip unless we add separate low clip strength
+
+                    # Create entry for the low variant LoRA using low_strength
                     low_lora_entry = {
                         "path": folder_paths.get_full_path("loras", low_variant_name),
-                        "strength": strength_model,
+                        "strength": low_strength_model,
                         "name": os.path.splitext(low_variant_name)[0],
                         "blocks": blocks.get("selected_blocks", {}) if blocks else {},
                         "layer_filter": blocks.get("layer_filter", "") if blocks else "",
@@ -692,12 +697,12 @@ class WanVideoPowerLoraLoader:
                         "merge_loras": merge_loras,
                     }
 
-                    # Add clip strength if it's different from model strength
-                    if strength_clip != strength_model:
-                        low_lora_entry["strength_clip"] = strength_clip
+                    # Add clip strength if different from model strength (using low strength)
+                    if low_strength_clip != low_strength_model:
+                        low_lora_entry["strength_clip"] = low_strength_clip
 
                     low_loras_list.append(low_lora_entry)
-                    print(f"[WanVideoPowerLoraLoader] Added low variant '{low_variant_name}' to low_loras_list")
+                    print(f"[WanVideoPowerLoraLoader] Added low variant '{low_variant_name}' with strength {low_strength_model} to low_loras_list")
 
         return (loras_list, low_loras_list)
 ### // POWER LORA END

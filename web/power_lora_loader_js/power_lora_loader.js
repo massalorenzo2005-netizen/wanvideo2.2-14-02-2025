@@ -961,24 +961,10 @@ class PowerLoraLoaderWidget extends RgthreeBaseWidget {
             v.low_strength = 1;
         }
 
-        // CRITICAL: When using low variant, swap the lora and strength values
+        // Keep the original selected LoRA - let Python backend handle the outputs
         if (v.is_low && v.low_variant_name) {
-            console.log(`[JS] Using low variant: switching from ${v.lora} (strength: ${v.strength}) to ${v.low_variant_name} (strength: ${v.low_strength})`);
-
-            // Store original values for debugging
-            const originalLora = v.lora;
-            const originalStrength = v.strength;
-
-            // Use low variant name and low strength
-            v.lora = v.low_variant_name;
-            v.strength = v.low_strength;
-
-            // If in model/clip mode, also update strengthTwo
-            if (this.showModelAndClip && v.strengthTwo !== undefined) {
-                v.strengthTwo = v.low_strength;
-            }
-
-            console.log(`[JS] Swapped values: ${originalLora} -> ${v.lora}, strength: ${originalStrength} -> ${v.strength}`);
+            console.log(`[JS] High LoRA '${v.lora}' has low variant '${v.low_variant_name}' - sending both to backend`);
+            console.log(`[JS] High strength: ${v.strength}, Low strength: ${v.low_strength}`);
         }
 
         // Enhanced debug logging
