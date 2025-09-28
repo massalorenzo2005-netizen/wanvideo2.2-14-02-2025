@@ -603,6 +603,7 @@ class WanVideoPowerLoraLoader:
             "optional": FlexibleOptionalInputType(type=any_type, data={
                 "prev_lora": ("WANVIDLORA", {"default": None, "tooltip": "For loading multiple LoRAs"}),
                 "blocks": ("SELECTEDBLOCKS", {"tooltip": "Block selection for lora application"}),
+                "overwrite_duplicates": ("BOOLEAN", {"default": False, "tooltip": "Overwrite duplicate LoRAs instead of adding them"}),
             }),
             "hidden": {},
         }
@@ -613,7 +614,7 @@ class WanVideoPowerLoraLoader:
     CATEGORY = "WanVideoWrapper"
     DESCRIPTION = "A powerful, flexible node to load multiple WanVideo loras with rgthree-style UI"
 
-    def load_loras(self, prev_lora=None, blocks=None, **kwargs):
+    def load_loras(self, prev_lora=None, blocks=None, overwrite_duplicates=False, **kwargs):
         """Loops over the provided loras in kwargs and applies valid ones."""
         # Get options from widget data first, fallback to attributes
         options_data = kwargs.get('OptionsWidget')
@@ -621,10 +622,12 @@ class WanVideoPowerLoraLoader:
         if options_data:
             low_mem_load = options_data.get('low_mem_load', False)
             merge_loras = options_data.get('merge_loras', True)
+            overwrite_duplicates = options_data.get('overwrite_duplicates', False)
         else:
             # Fallback to ComfyUI properties
             low_mem_load = getattr(self, 'low_mem_load', False)
             merge_loras = getattr(self, 'merge_loras', True)
+            # overwrite_duplicates uses the parameter value when no OptionsWidget is present
 
         if not merge_loras:
             low_mem_load = False  # Unmerged LoRAs don't need low_mem_load
@@ -673,7 +676,26 @@ class WanVideoPowerLoraLoader:
                 if strength_clip != strength_model:
                     lora_entry["strength_clip"] = strength_clip
 
-                loras_list.append(lora_entry)
+                # Handle overwrite logic - check if this LoRA duplicates one from prev_lora
+                if overwrite_duplicates and prev_lora:
+                    # Check for duplicate by name in the original prev_lora list
+                    duplicate_index = None
+                    for i, existing_lora in enumerate(loras_list):
+                        if existing_lora["name"] == lora_entry["name"]:
+                            duplicate_index = i
+                            break
+
+                    if duplicate_index is not None:
+                        # Found duplicate - overwrite it
+                        old_strength = loras_list[duplicate_index]["strength"]
+                        loras_list[duplicate_index] = lora_entry
+                        print(f"Loading LoRA: {lora_entry['name']} with strength: {lora_entry['strength']} < overwritten (was: {old_strength})")
+                    else:
+                        # No duplicate found, add normally
+                        loras_list.append(lora_entry)
+                else:
+                    # Default behavior: append all LoRAs
+                    loras_list.append(lora_entry)
 
                 # Check if JavaScript detected a low variant for this LoRA
                 is_low = value.get('is_low', False)
@@ -701,8 +723,26 @@ class WanVideoPowerLoraLoader:
                     if low_strength_clip != low_strength_model:
                         low_lora_entry["strength_clip"] = low_strength_clip
 
-                    low_loras_list.append(low_lora_entry)
-                    print(f"[WanVideoPowerLoraLoader] Added low variant '{low_variant_name}' with strength {low_strength_model} to low_loras_list")
+                    # Handle overwrite logic for low LoRAs
+                    if overwrite_duplicates:
+                        # Check for duplicate by name in low_loras_list
+                        duplicate_index = None
+                        for i, existing_low_lora in enumerate(low_loras_list):
+                            if existing_low_lora["name"] == low_lora_entry["name"]:
+                                duplicate_index = i
+                                break
+
+                        if duplicate_index is not None:
+                            # Found duplicate - overwrite it
+                            old_low_strength = low_loras_list[duplicate_index]["strength"]
+                            low_loras_list[duplicate_index] = low_lora_entry
+                            print(f"Loading low LoRA: {low_lora_entry['name']} with strength: {low_strength_model} < overwritten (was: {old_low_strength})")
+                        else:
+                            # No duplicate found, add normally
+                            low_loras_list.append(low_lora_entry)
+                    else:
+                        # Default behavior: append all low LoRAs
+                        low_loras_list.append(low_lora_entry)
 
         return (loras_list, low_loras_list)
 ### // POWER LORA END

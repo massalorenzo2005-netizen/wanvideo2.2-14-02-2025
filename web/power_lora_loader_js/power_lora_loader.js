@@ -431,7 +431,7 @@ const PROP_LABEL_SHOW_STRENGTHS = "Show Strengths";
 const PROP_VALUE_SHOW_STRENGTHS_SINGLE = "Single Strength";
 const PROP_VALUE_SHOW_STRENGTHS_SEPARATE = "Separate Model & Clip";
 
-const MINIMUM_NODE_WIDTH = 380;
+const MINIMUM_NODE_WIDTH = 480;
 
 const DEFAULT_LORA_WIDGET_DATA = {
     on: true,
@@ -453,6 +453,7 @@ class OptionsWidget extends RgthreeBaseWidget {
         this.hitAreas = {
             low_mem_toggle: { bounds: [0, 0] },
             merge_loras_toggle: { bounds: [0, 0] },
+            overwrite_toggle: { bounds: [0, 0] },
             high_to_low_button: { bounds: [0, 0] },
             low_to_high_button: { bounds: [0, 0] },
         };
@@ -463,7 +464,8 @@ class OptionsWidget extends RgthreeBaseWidget {
     serializeValue(node, index) {
         const value = {
             low_mem_load: node.properties['low_mem_load'] || false,
-            merge_loras: node.properties['merge_loras'] !== false ? true : false
+            merge_loras: node.properties['merge_loras'] !== false ? true : false,
+            overwrite_duplicates: node.properties['overwrite_duplicates'] || false
         };
         console.log(`[JS] OptionsWidget serializing: `, value);
         return value;
@@ -487,6 +489,7 @@ class OptionsWidget extends RgthreeBaseWidget {
         // Widget state
         const lowMemValue = node.properties['low_mem_load'] || false;
         const mergeValue = node.properties['merge_loras'] === false ? false : true;
+        const overwriteValue = node.properties['overwrite_duplicates'] || false;
 
         ctx.save();
         ctx.textAlign = "left";
@@ -513,6 +516,19 @@ class OptionsWidget extends RgthreeBaseWidget {
         this.hitAreas['merge_loras_toggle'].bounds = bounds;
         this.hitAreas['merge_loras_toggle'].onDown = () => {
             node.properties['merge_loras'] = !mergeValue;
+            this.cancelMouseDown();
+            node.setDirtyCanvas(true, true);
+            return true;
+        };
+        posX += bounds[1] + innerMargin * 3;
+
+        // Draw Overwrite toggle
+        ctx.fillText("Overwrite", posX, midY);
+        posX += ctx.measureText("Overwrite").width + innerMargin;
+        bounds = drawTogglePart(ctx, { posX, posY, height, value: overwriteValue });
+        this.hitAreas['overwrite_toggle'].bounds = bounds;
+        this.hitAreas['overwrite_toggle'].onDown = () => {
+            node.properties['overwrite_duplicates'] = !overwriteValue;
             this.cancelMouseDown();
             node.setDirtyCanvas(true, true);
             return true;
@@ -1167,7 +1183,7 @@ class WanVideePowerLoraLoader {
         }
 
         this.addNonLoraWidgets();
-        this.size[0] = this._tempWidth;
+        this.size[0] = Math.max(MINIMUM_NODE_WIDTH, this._tempWidth);
         this.size[1] = Math.max(this._tempHeight, this.computeSize()[1]);
     }
 
@@ -1175,7 +1191,7 @@ class WanVideePowerLoraLoader {
         this.addNonLoraWidgets();
         const computed = this.computeSize();
         this.size = this.size || [0, 0];
-        this.size[0] = Math.max(this.size[0], computed[0]);
+        this.size[0] = Math.max(MINIMUM_NODE_WIDTH, this.size[0], computed[0]);
         this.size[1] = Math.max(this.size[1], computed[1]);
         this.setDirtyCanvas(true, true);
     }
@@ -1267,7 +1283,7 @@ app.registerExtension({
                 this.addNonLoraWidgets();
 
                 // Restore size
-                this.size[0] = this._tempWidth;
+                this.size[0] = Math.max(MINIMUM_NODE_WIDTH, this._tempWidth);
                 this.size[1] = Math.max(this._tempHeight, this.computeSize()[1]);
             };
 
@@ -1303,6 +1319,9 @@ app.registerExtension({
                 }
                 if (this.properties['merge_loras'] === undefined) {
                     this.properties['merge_loras'] = false;
+                }
+                if (this.properties['overwrite_duplicates'] === undefined) {
+                    this.properties['overwrite_duplicates'] = false;
                 }
 
                 // Pre-fetch loras for better performance
@@ -1516,6 +1535,21 @@ app.registerExtension({
                 });
             };
 
+            // Add width locking mechanism to prevent shrinking below minimum width
+            nodeType.prototype.onResize = function(size) {
+                // Enforce minimum width constraint
+                if (size && size[0] < MINIMUM_NODE_WIDTH) {
+                    size[0] = MINIMUM_NODE_WIDTH;
+                }
+
+                // Call the original onResize if it exists
+                if (LGraphNode.prototype.onResize) {
+                    return LGraphNode.prototype.onResize.call(this, size);
+                }
+
+                return size;
+            };
+
             // Set up properties for the node class
             nodeType[`@${PROP_LABEL_SHOW_STRENGTHS}`] = {
                 type: "combo",
@@ -1528,6 +1562,10 @@ app.registerExtension({
             nodeType['@merge_loras'] = {
                 type: 'boolean',
                 default: true,
+            };
+            nodeType['@overwrite_duplicates'] = {
+                type: 'boolean',
+                default: false,
             };
         }
     },
