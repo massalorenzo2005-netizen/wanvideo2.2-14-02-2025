@@ -991,6 +991,7 @@ class WanVideoSampler:
         elif "comfy" in rope_function: # comfy's rope
             transformer.rope_embedder.k = riflex_freq_index
             transformer.rope_embedder.num_frames = latent_video_length
+            log.info(f"Using comfy rope function, latent_video_length: {latent_video_length}")
 
         transformer.rope_func = rope_function
         for block in transformer.blocks:
@@ -1240,11 +1241,15 @@ class WanVideoSampler:
                         extra_channel_latents_input = extra_channel_latents.to(z)
                     z = torch.cat([z, extra_channel_latents_input])
 
+                from xfuser.core.distributed import get_sequence_parallel_world_size
+                max_seq_len = int(math.ceil(seq_len / get_sequence_parallel_world_size())) * get_sequence_parallel_world_size()
                 base_params = {
                     'x': [z], # latent
                     'y': [image_cond_input] if image_cond_input is not None else None, # image cond
                     'clip_fea': clip_fea, # clip features
-                    'seq_len': seq_len, # sequence length
+                    # ToDo(wbai): Enable XDI-T for Wan2.1
+                    # 'seq_len': seq_len, # sequence length
+                    'seq_len': max_seq_len,
                     'device': device, # main device
                     'freqs': freqs, # rope freqs
                     't': timestep, # current timestep
@@ -2601,7 +2606,7 @@ class WanVideoSampler:
                             if pose_images is not None:
                                 pose_image_slice = pose_images_in[:, start:end].to(device)
                                 pose_input_slice = vae.encode([pose_image_slice], device,tiled=tiled_vae, pbar=False).to(dtype)
-                            
+
                             vae.to(offload_device)
 
                             if wananim_face_pixels is None and wananim_ref_masks is not None:
