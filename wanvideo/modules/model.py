@@ -356,10 +356,10 @@ class WanRMSNorm(nn.Module):
         if use_chunked:
             return self.forward_chunked(x, num_chunks)
         else:
-            return self._norm(x.to(self.weight.dtype)) * self.weight
+            return (self._norm(x.to(self.weight.dtype)) * self.weight).to(x.dtype)
 
     def _norm(self, x):
-        return x * (torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)).to(x.dtype)
+        return x * (torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps))
 
     def forward_chunked(self, x, num_chunks=4):
         output = torch.empty_like(x)
@@ -386,7 +386,7 @@ class WanFusedRMSNorm(nn.RMSNorm):
         if use_chunked:
             return self.forward_chunked(x, num_chunks)
         else:
-            return super().forward(x)
+            return super().forward(x.to(self.weight.dtype).to(x.dtype))
 
     def forward_chunked(self, x, num_chunks=4):
         output = torch.empty_like(x)
@@ -398,7 +398,7 @@ class WanFusedRMSNorm(nn.RMSNorm):
         for size in chunk_sizes:
             end_idx = start_idx + size
             chunk = x[:, start_idx:end_idx, :]
-            output[:, start_idx:end_idx, :] = super().forward(chunk)
+            output[:, start_idx:end_idx, :] = super().forward(chunk.to(self.weight.dtype)).to(chunk.dtype)
             start_idx = end_idx
             
         return output
@@ -464,8 +464,8 @@ class WanSelfAttention(nn.Module):
 
     def qkv_fn(self, x):
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-        q = self.norm_q(self.q(x).to(self.norm_q.weight.dtype)).to(x.dtype).view(b, s, n, d)
-        k = self.norm_k(self.k(x).to(self.norm_k.weight.dtype)).to(x.dtype).view(b, s, n, d)
+        q = self.norm_q(self.q(x)).view(b, s, n, d)
+        k = self.norm_k(self.k(x)).view(b, s, n, d)
         v = self.v(x).view(b, s, n, d)
         return q, k, v
     
@@ -480,8 +480,8 @@ class WanSelfAttention(nn.Module):
     
     def qkv_fn_ip(self, x):
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
-        q = self.norm_q(self.q(x) + self.q_loras(x).to(self.norm_q.weight.dtype)).to(x.dtype).view(b, s, n, d)
-        k = self.norm_k(self.k(x) + self.k_loras(x).to(self.norm_k.weight.dtype)).to(x.dtype).view(b, s, n, d)
+        q = self.norm_q(self.q(x) + self.q_loras(x)).view(b, s, n, d)
+        k = self.norm_k(self.k(x) + self.k_loras(x)).view(b, s, n, d)
         v = (self.v(x) + self.v_loras(x)).view(b, s, n, d)
         return q, k, v
 
@@ -674,7 +674,7 @@ class WanT2VCrossAttention(WanSelfAttention):
             if num_cond_latents is not None and num_cond_latents > 0:
                 num_cond_latents_thw = num_cond_latents * (s // grid_sizes[0][0])
                 x = x[:, num_cond_latents_thw:]
-            q = self.norm_q(self.q(x).view(b, -1, n, d))
+            q = self.norm_q(self.q(x).view(b, -1, n, d).to(self.norm_q.weight.dtype)).to(x.dtype)
         else:
             q = self.norm_q(self.q(x).to(self.norm_q.weight.dtype),num_chunks=2 if rope_func == "comfy_chunked" else 1).to(x.dtype).view(b, -1, n, d)
 
@@ -773,13 +773,13 @@ class WanI2VCrossAttention(WanSelfAttention):
             x_text = self.normalized_attention_guidance(b, n, d, q, context, nag_context, nag_params)
         else:
             # text attention
-            k = self.norm_k(self.k(context).to(self.norm_k.weight.dtype)).view(b, -1, n, d).to(x.dtype)
+            k = self.norm_k(self.k(context)).view(b, -1, n, d)
             v = self.v(context).view(b, -1, n, d)
             x_text = attention(q, k, v, attention_mode=self.attention_mode).flatten(2)
 
         #img attention
         if clip_embed is not None:
-            k_img = self.norm_k_img(self.k_img(clip_embed).to(self.norm_k_img.weight.dtype)).view(b, -1, n, d).to(x.dtype)
+            k_img = self.norm_k_img(self.k_img(clip_embed)).view(b, -1, n, d)
             v_img = self.v_img(clip_embed).view(b, -1, n, d)
             img_x = attention(q, k_img, v_img, attention_mode=self.attention_mode).flatten(2)
             x = x_text + img_x
@@ -871,8 +871,8 @@ class MTVCrafterMotionAttention(WanSelfAttention):
         b, n, d = x.size(0), self.num_heads, self.head_dim
 
         # compute query, key, value
-        q = self.norm_q(self.q(x)).view(b, -1, n, d)
-        k = self.norm_k(self.k(mo)).view(b, n, -1, d)
+        q = self.norm_q(self.q(x).to(self.norm_q.weight.dtype)).to(x.dtype).view(b, -1, n, d)
+        k = self.norm_k(self.k(mo).to(self.norm_k.weight.dtype)).to(x.dtype).view(b, n, -1, d)
         v = self.v(mo).view(b, -1, n, d)
 
         # compute attention
@@ -1265,13 +1265,13 @@ class WanAttentionBlock(nn.Module):
                 x = x.to(input_dtype)
                 # MultiTalk
                 if multitalk_audio_embedding is not None and not isinstance(self, VaceWanAttentionBlock):
-                    x_audio = self.audio_cross_attn(self.norm_x(x), encoder_hidden_states=multitalk_audio_embedding,
+                    x_audio = self.audio_cross_attn(self.norm_x(x.to(self.norm_x.weight.dtype)).to(input_dtype), encoder_hidden_states=multitalk_audio_embedding,
                                                 shape=grid_sizes[0], x_ref_attn_map=x_ref_attn_map, human_num=human_num)
                     x = x.add(x_audio, alpha=audio_scale)
 
                 # MTV-Crafter Motion Attention
                 if self.use_motion_attn and mtv_motion_tokens is not None and mtv_motion_rotary_emb is not None:                
-                    x_motion = self.motion_attn(self.norm4(x), mtv_motion_tokens, mtv_motion_rotary_emb, grid_sizes, mtv_freqs)
+                    x_motion = self.motion_attn(self.norm4(x.to(self.norm4.weight.dtype)).to(input_dtype), mtv_motion_tokens, mtv_motion_rotary_emb, grid_sizes, mtv_freqs)
                     x = x.add(x_motion, alpha=mtv_strength)
 
                 # HuMo Audio Cross-Attention
@@ -1284,7 +1284,7 @@ class WanAttentionBlock(nn.Module):
                 x_ffn = self.ffn_chunked(x, shift_mlp, scale_mlp)
             else:
                 if zero_timestep:
-                    norm2_x = self.norm2(x)
+                    norm2_x = self.norm2(x.to(self.norm2.weight.dtype)).to(input_dtype)
                     parts = []
                     for i in range(2):
                         parts.append(norm2_x[:, self.seg_idx[i]:self.seg_idx[i + 1]] *
