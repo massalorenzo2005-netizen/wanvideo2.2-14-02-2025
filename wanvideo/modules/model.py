@@ -1339,7 +1339,6 @@ class WanAttentionBlock(nn.Module):
                 # MultiTalk
                 if multitalk_audio_embedding is not None and not isinstance(self, VaceWanAttentionBlock):
                     x_audio = self.audio_cross_attn(self.norm_x(x.to(self.norm_x.weight.dtype)).to(input_dtype), encoder_hidden_states=multitalk_audio_embedding,
-                    x_audio = self.audio_cross_attn(self.norm_x(x.to(self.norm_x.weight.dtype)).to(input_dtype), encoder_hidden_states=multitalk_audio_embedding,
                                                 shape=grid_sizes[0], x_ref_attn_map=x_ref_attn_map, human_num=human_num)
                     x = x.add(x_audio, alpha=audio_scale)
 
@@ -2664,13 +2663,20 @@ class WanModel(torch.nn.Module):
             e = e.to(self.offload_device, non_blocking=self.use_non_blocking)
 
         # clip vision embedding
-        clip_embed = None
+        clip_embed = clip_embed_mot_ref = None
         if clip_fea is not None and hasattr(self, "img_emb"):
             clip_fea = clip_fea.to(self.main_device)
             if self.offload_img_emb:
                 self.img_emb.to(self.main_device)
             clip_embed = self.img_emb(clip_fea)  # bs x 257 x dim
-            #context = torch.concat([context_clip, context], dim=1)
+            if self.offload_img_emb:
+                self.img_emb.to(self.offload_device, non_blocking=self.use_non_blocking)
+
+        if mot_ref_clip_embeds is not None:
+            mot_ref_clip_embeds = mot_ref_clip_embeds.to(self.main_device)
+            if self.offload_img_emb:
+                self.img_emb.to(self.main_device)
+            clip_embed_mot_ref = self.img_emb_mot_ref(mot_ref_clip_embeds)  # bs x 257 x dim
             if self.offload_img_emb:
                 self.img_emb.to(self.offload_device, non_blocking=self.use_non_blocking)
 
