@@ -2605,7 +2605,7 @@ class WanModel(torch.nn.Module):
             if add_text_emb is not None:
                 self.text_projection.to(self.main_device)
                 add_text_emb = self.text_projection(add_text_emb.to(self.text_projection[0].weight.dtype)).to(text_embed_dtype)
-                context = torch.cat([context, add_text_emb], dim=1)
+                context = torch.cat([add_text_emb, context], dim=1)
             context = self.text_embedding(context)
 
             if self.is_longcat:
