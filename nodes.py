@@ -775,7 +775,8 @@ class WanVideoAddBindweaveEmbeds:
                 }, 
                 "optional": {
                     "ref_masks": ("MASK", {"tooltip": "Reference mask to encode"}),
-                    "qwenvl_embeds": ("QWENVL_EMBEDS", {"tooltip": "Qwen-VL image embeddings for the reference image"}),
+                    "qwenvl_embeds_pos": ("QWENVL_EMBEDS", {"tooltip": "Qwen-VL image embeddings for the reference image"}),
+                    "qwenvl_embeds_neg": ("QWENVL_EMBEDS", {"tooltip": "Qwen-VL image embeddings for the reference image"}),
                 }
         }
 
@@ -784,7 +785,7 @@ class WanVideoAddBindweaveEmbeds:
     FUNCTION = "add"
     CATEGORY = "WanVideoWrapper"
 
-    def add(self, embeds, reference_latents, ref_masks=None, qwenvl_embeds=None):
+    def add(self, embeds, reference_latents, ref_masks=None, qwenvl_embeds_pos=None, qwenvl_embeds_neg=None):
         updated = dict(embeds)
         image_embeds = embeds["image_embeds"]
         max_refs = 4
@@ -809,7 +810,8 @@ class WanVideoAddBindweaveEmbeds:
 
             updated["mask"] = mask
         updated["image_embeds"] = image_embeds
-        updated["qwenvl_embeds"] = qwenvl_embeds
+        updated["qwenvl_embeds_pos"] = qwenvl_embeds_pos
+        updated["qwenvl_embeds_neg"] = qwenvl_embeds_neg
         return (updated, {"samples": image_embeds.unsqueeze(0)}, mask[0].float())
     
 class TextImageEncodeQwenVL():
@@ -818,6 +820,7 @@ class TextImageEncodeQwenVL():
         return {"required": {
                     "clip": ("CLIP",),
                     "prompt": ("STRING", {"default": "", "multiline": True}),
+                    "auto_resize": ("BOOLEAN", {"default": True, "tooltip": "Use the original code's image resize logic"}),
                 }, 
                 "optional": {
                     "image": ("IMAGE", ),
@@ -829,22 +832,28 @@ class TextImageEncodeQwenVL():
     FUNCTION = "add"
     CATEGORY = "WanVideoWrapper"
 
-    def add(cls, clip, prompt, image=None):
+    def add(cls, clip, prompt, auto_resize, image=None):
         if image is None:
-            images = []
+            input_images = []
         else:
-            samples = image.movedim(-1, 1)
-            total = int(1280 * 720)
+            if auto_resize:
+                total = int(1280 * 720)
+                width = image.shape[2]
+                height = image.shape[1]
 
-            scale_by = math.sqrt(total / (samples.shape[3] * samples.shape[2]))
-            width = round(samples.shape[3] * scale_by)
-            height = round(samples.shape[2] * scale_by)
+                if width * height > total:
+                    new_width = int(width * 0.3)
+                    new_height = int(height * 0.3)
+                else:
+                    new_width = int(width * 0.75)
+                    new_height = int(height * 0.75)
 
-            s = common_upscale(samples, width, height, "area", "disabled")
-            image = s.movedim(1, -1)
-            images = [image[:, :, :, :3]]
+                input_images = common_upscale(image.movedim(-1, 1), new_width, new_height, "area", "disabled").movedim(1, -1)
+                log.info(f"TextImageEncodeQwenVL: auto-resized image to: {new_width}x{new_height}")
+            else:
+                input_images = image
 
-        tokens = clip.tokenize(prompt, images=images)
+        tokens = clip.tokenize(prompt, images=input_images[..., :3])
         conditioning = clip.encode_from_tokens_scheduled(tokens)
         print("Qwen-VL embeds shape:", conditioning[0][0].shape)
 
