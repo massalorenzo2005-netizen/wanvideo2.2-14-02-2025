@@ -2226,6 +2226,7 @@ class WanModel(torch.nn.Module):
         x_ovi=None, seq_len_ovi=None, ovi_negative_text_embeds=None,
         flashvsr_LQ_latent=None, flashvsr_strength=1.0,
         num_cond_latents=None,
+        add_text_emb=None,
     ):
         r"""
         Forward pass through the diffusion model
@@ -2599,8 +2600,13 @@ class WanModel(torch.nn.Module):
                     torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context_ovi]).to(text_embed_dtype))
 
             tokens = context[0].shape[0]
-            context = self.text_embedding(
-            torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context]).to(text_embed_dtype))
+            context = torch.stack([torch.cat([u, u.new_zeros(self.text_len - u.size(0), u.size(1))]) for u in context]).to(text_embed_dtype)
+
+            if add_text_emb is not None:
+                self.text_projection.to(self.main_device)
+                add_text_emb = self.text_projection(add_text_emb.to(self.text_projection[0].weight.dtype)).to(text_embed_dtype)
+                context = torch.cat([context, add_text_emb], dim=1)
+            context = self.text_embedding(context)
 
             if self.is_longcat:
                 context[:, tokens:] = 0

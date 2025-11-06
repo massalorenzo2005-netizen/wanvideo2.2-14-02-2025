@@ -342,7 +342,12 @@ class WanVideoSampler:
                 dtype=torch.float32,
                 generator=seed_g,
                 device=torch.device("cpu"))
-            seq_len = image_embeds["max_seq_len"]
+            
+            noise_front_pad_num = image_cond.shape[1] - noise.shape[1]
+            if noise_front_pad_num > 0:
+                pad = torch.zeros((noise.shape[0], noise_front_pad_num, noise.shape[2], noise.shape[3]), dtype=noise.dtype, device=noise.device)
+                noise = torch.concat([pad, noise], dim=1)
+
 
             control_embeds = image_embeds.get("control_embeds", None)
             if control_embeds is not None:
@@ -411,8 +416,7 @@ class WanVideoSampler:
                     dtype=torch.float32,
                     device=torch.device("cpu"),
                     generator=seed_g)
-
-            seq_len = math.ceil((noise.shape[2] * noise.shape[3]) / 4 * noise.shape[1])
+            
 
             recammaster = image_embeds.get("recammaster", None)
             if recammaster is not None:
@@ -863,6 +867,7 @@ class WanVideoSampler:
                 seq_len = math.ceil((noise.shape[2] * noise.shape[3]) / 4 * noise.shape[1])
 
         latent = noise
+        seq_len = math.ceil((noise.shape[2] * noise.shape[3]) / 4 * noise.shape[1])
 
         #controlnet
         controlnet_latents = controlnet = None
@@ -915,6 +920,8 @@ class WanVideoSampler:
             rope_function = "default" #echoshot does not support comfy rope function
             log.info(f"Number of shots in prompt: {shot_num}, Shot token lengths: {shot_len}")
 
+        # Bindweave
+        qwenvl_embeds = image_embeds.get("qwenvl_embeds", None)
 
         mm.unload_all_models()
         mm.soft_empty_cache()
@@ -1402,7 +1409,8 @@ class WanVideoSampler:
                     "ovi_negative_text_embeds": ovi_negative_text_embeds, # Audio latent model negative text embeds for Ovi
                     "flashvsr_LQ_latent": flashvsr_LQ_latent, # FlashVSR LQ latent for upsampling
                     "flashvsr_strength": flashvsr_strength, # FlashVSR strength
-                    "num_cond_latents": len(all_indices) if transformer.is_longcat else None # number of cond latents LongCat to separate attention
+                    "num_cond_latents": len(all_indices) if transformer.is_longcat else None,
+                    "add_text_emb": qwenvl_embeds.to(device) if qwenvl_embeds is not None else None # QwenVL embeddings for Bindweave
                 }
 
                 batch_size = 1
@@ -3061,6 +3069,8 @@ class WanVideoSampler:
             latent = latent[:,:-phantom_latents.shape[1]]
         if humo_reference_count > 0:
             latent = latent[:,:-humo_reference_count]
+        if noise_front_pad_num > 0:
+            latent = latent[:, noise_front_pad_num:]
 
         cache_states = None
         if cache_args is not None:

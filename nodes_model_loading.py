@@ -1479,6 +1479,12 @@ class WanVideoModelLoader:
             transformer.add_proj = zero_module(torch.nn.Linear(inner_dim, inner_dim))
             transformer.attn_conv_in = torch.nn.Conv3d(attn_cond_in_dim, inner_dim, kernel_size=transformer.patch_size, stride=transformer.patch_size)
         
+        # Bindweave text_projection
+        if "text_projection.0.weight" in sd:
+            log.info("Bindweave model detected, adding text_projector to the model")
+            text_dim = sd["text_projection.0.weight"].shape[0]
+            transformer.text_projection = nn.Sequential(nn.Linear(sd["text_projection.0.weight"].shape[1], text_dim), nn.GELU(approximate='tanh'), nn.Linear(text_dim, text_dim))
+
         latent_format=Wan22 if dim == 3072 else Wan21
         comfy_model = WanVideoModel(
             WanVideoModelConfig(base_dtype, latent_format=latent_format),
