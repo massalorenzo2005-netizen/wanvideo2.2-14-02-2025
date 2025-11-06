@@ -834,7 +834,7 @@ class TextImageEncodeQwenVL():
             images = []
         else:
             samples = image.movedim(-1, 1)
-            total = int(1024 * 1024)
+            total = int(1280 * 720)
 
             scale_by = math.sqrt(total / (samples.shape[3] * samples.shape[2]))
             width = round(samples.shape[3] * scale_by)
