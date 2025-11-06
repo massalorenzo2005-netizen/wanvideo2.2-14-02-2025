@@ -833,20 +833,11 @@ class TextImageEncodeQwenVL():
 
     def add(cls, clip, prompt, image=None):
         if image is None:
-            images = []
+            input_images = []
         else:
-            samples = image.movedim(-1, 1)
-            total = int(1280 * 720)
+            input_images = [image[:, :, :, :3]]
 
-            scale_by = math.sqrt(total / (samples.shape[3] * samples.shape[2]))
-            width = round(samples.shape[3] * scale_by)
-            height = round(samples.shape[2] * scale_by)
-
-            s = common_upscale(samples, width, height, "area", "disabled")
-            image = s.movedim(1, -1)
-            images = [image[:, :, :, :3]]
-
-        tokens = clip.tokenize(prompt, images=images)
+        tokens = clip.tokenize(prompt, images=input_images)
         conditioning = clip.encode_from_tokens_scheduled(tokens)
         print("Qwen-VL embeds shape:", conditioning[0][0].shape)
         return (conditioning[0][0],)
