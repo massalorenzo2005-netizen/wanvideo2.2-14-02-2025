@@ -395,7 +395,7 @@ class WanVideoLoraSelect:
                 return (loras_list,)
 
         try:
-            lora_path = folder_paths.get_full_path("loras", lora)
+            lora_path = folder_paths.get_full_path_or_raise("loras", lora)
         except:
             lora_path = lora
 
@@ -532,7 +532,7 @@ class WanVideoLoraSelectMulti:
             if not lora_name or lora_name == "none" or s == 0.0:
                 continue
             loras_list.append({
-                "path": folder_paths.get_full_path("loras", lora_name),
+                "path": folder_paths.get_full_path_or_raise("loras", lora_name),
                 "strength": s,
                 "name": os.path.splitext(lora_name)[0],
                 "blocks": blocks.get("selected_blocks", {}),
@@ -560,7 +560,7 @@ class WanVideoVACEModelSelect:
     DESCRIPTION = "VACE model to use when not using model that has it included, loaded from 'ComfyUI/models/diffusion_models'"
 
     def getvacepath(self, vace_model):
-        vace_model = [{"path": folder_paths.get_full_path("diffusion_models", vace_model)}]
+        vace_model = [{"path": folder_paths.get_full_path_or_raise("diffusion_models", vace_model)}]
         return (vace_model,)
     
 class WanVideoExtraModelSelect:
@@ -582,7 +582,7 @@ class WanVideoExtraModelSelect:
     DESCRIPTION = "Extra model to load and add to the main model, ie. VACE or MTV Crafter 'ComfyUI/models/diffusion_models'"
 
     def getmodelpath(self, extra_model, prev_model=None):
-        extra_model = {"path": folder_paths.get_full_path("diffusion_models", extra_model)}
+        extra_model = {"path": folder_paths.get_full_path_or_raise("diffusion_models", extra_model)}
         if prev_model is not None and isinstance(prev_model, list):
             extra_model_list = prev_model + [extra_model]
         else:
@@ -1689,7 +1689,7 @@ class WanVideoVAELoader:
 
     def loadmodel(self, model_name, precision, compile_args=None):
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
-        model_path = folder_paths.get_full_path("vae", model_name)
+        model_path = folder_paths.get_full_path_or_raise("vae", model_name)
         vae_sd = load_torch_file(model_path, safe_load=True)
 
         has_model_prefix = any(k.startswith("model.") for k in vae_sd.keys())
@@ -1740,7 +1740,7 @@ class WanVideoTinyVAELoader:
         from .taehv import TAEHV
 
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
-        model_path = folder_paths.get_full_path("vae_approx", model_name)
+        model_path = folder_paths.get_full_path_or_raise("vae_approx", model_name)
         vae_sd = load_torch_file(model_path, safe_load=True)
         
         vae = TAEHV(vae_sd, parallel=parallel, dtype=dtype)
@@ -1778,7 +1778,7 @@ class LoadWanVideoT5TextEncoder:
 
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
 
-        model_path = folder_paths.get_full_path("text_encoders", model_name)
+        model_path = folder_paths.get_full_path_or_raise("text_encoders", model_name)
         sd = load_torch_file(model_path, safe_load=True)
 
         if quantization == "disabled":
@@ -1888,10 +1888,10 @@ class LoadWanVideoClipTextEncoder:
 
         dtype = {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": torch.float32}[precision]
 
-        model_path = folder_paths.get_full_path("clip_vision", model_name)
+        model_path = folder_paths.get_full_path_or_raise("clip_vision", model_name)
         # We also support legacy setups where the model is in the text_encoders folder
         if model_path is None:
-            model_path = folder_paths.get_full_path("text_encoders", model_name)
+            model_path = folder_paths.get_full_path_or_raise("text_encoders", model_name)
         sd = load_torch_file(model_path, safe_load=True)
         if "log_scale" not in sd:
             raise ValueError("Invalid CLIP model, this node expectes the 'open-clip-xlm-roberta-large-vit-huge-14' model")
