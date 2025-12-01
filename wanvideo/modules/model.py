@@ -293,7 +293,7 @@ class WanRMSNorm(nn.Module):
         if use_chunked:
             return self.forward_chunked(x, num_chunks)
         else:
-            return self._norm(x.to(self.weight.dtype)) * self.weight
+            return self._norm(x.to(self.weight.dtype)) * self.weight.to(x.device)
 
     def _norm(self, x):
         return x * (torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)).to(x.dtype)
@@ -660,11 +660,11 @@ class WanT2VCrossAttention(WanSelfAttention):
             x = self.normalized_attention_guidance(b, n, d, q, context, nag_context, nag_params)
         else:
             if is_longcat:
-                k = self.norm_k(self.k(context).to(self.norm_k.weight.dtype).view(b, -1, n, d)).to(x.dtype)
+                k = self.norm_k(self.k(context).to(self.norm_k.weight.dtype).view(b, -1, n, d)).to(x.dtype).to(x.device)
             else:
-                k = self.norm_k(self.k(context).to(self.norm_k.weight.dtype)).to(x.dtype).view(b, -1, n, d)
+                k = self.norm_k(self.k(context).to(self.norm_k.weight.dtype)).to(x.dtype).to(x.device).view(b, -1, n, d)
 
-            v = self.v(context).view(b, -1, n, d)
+            v = self.v(context).to(x.device).view(b, -1, n, d)
 
             #EchoShot rope
             if inner_t is not None and cross_freqs is not None:

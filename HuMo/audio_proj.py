@@ -16,7 +16,7 @@ class WanRMSNorm(nn.Module):
         Args:
             x(Tensor): Shape [B, L, C]
         """
-        return self._norm(x.to(self.weight.dtype)) * self.weight
+        return self._norm(x.to(self.weight.dtype)) * self.weight.to(x.device)
 
     def _norm(self, x):
         return x * (torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)).to(x.dtype)

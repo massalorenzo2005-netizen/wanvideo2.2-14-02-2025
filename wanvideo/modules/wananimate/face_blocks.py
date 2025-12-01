@@ -78,7 +78,7 @@ class RMSNorm(nn.Module):
     def forward(self, x):
         output = self._norm(x.float()).type_as(x)
         if hasattr(self, "weight"):
-            output = output * self.weight
+            output = output * self.weight.to(x.device)
         return output
 
 
