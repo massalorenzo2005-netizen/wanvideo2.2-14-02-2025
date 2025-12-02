@@ -141,8 +141,13 @@ def flash_attention(
             [lk] * b, dtype=torch.int32).to(
                 device=k.device, non_blocking=True)
     else:
-        k = half(torch.cat([u[:v] for u, v in zip(k, k_lens)]))
-        v = half(torch.cat([u[:v] for u, v in zip(v, k_lens)]))
+        # 20250927 pftq: Convert k_lens to a single tensor to avoid 'list' object has no attribute 'new_zeros' and optimize performance
+        k_lens_tensor = torch.tensor(k_lens, dtype=torch.int32, device=k.device) if not isinstance(k_lens, torch.Tensor) else k_lens.to(dtype=torch.int32, device=k.device)
+        k = half(torch.cat([u[:v] for u, v in zip(k, k_lens_tensor)]))  # Use tensor directly
+        #k = half(torch.cat([u[:v.item()] for u, v in zip(k, k_lens)]))  # original line
+        v = half(torch.cat([u[:v] for u, v in zip(v, k_lens_tensor)]))  # Use tensor directly
+        #v = half(torch.cat([u[:v.item()] for u, v in zip(v, k_lens)]))  # original line
+        k_lens = k_lens_tensor  # 20250927 pftq: Reuse k_lens_tensor for cu_seqlens_k
 
     q = q.to(v.dtype)
     k = k.to(v.dtype)
