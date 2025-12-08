@@ -79,15 +79,10 @@ def init_recognition_model(model_name, half=False, device='cuda', model_rootpath
     else:
         raise NotImplementedError(f'{model_name} is not implemented.')
 
-    # If model_rootpath is provided, use it directly (ComfyUI models directory)
-    # Otherwise fall back to the old behavior (node directory)
-    if model_rootpath is not None:
-        save_dir = os.path.join(model_rootpath, 'facexlib', 'weights')
-        model_path = load_file_from_url(
-            url=model_url, model_dir=None, progress=True, file_name=None, save_dir=save_dir)
-    else:
-        model_path = load_file_from_url(
-            url=model_url, model_dir='facexlib/weights', progress=True, file_name=None, save_dir=model_rootpath)
+    # Always use ComfyUI models directory
+    save_dir = os.path.join(model_rootpath, 'facexlib', 'weights')
+    model_path = load_file_from_url(
+        url=model_url, model_dir=None, progress=True, file_name=None, save_dir=save_dir)
 
     print("Loading model from:", model_path)
     model.load_state_dict(torch.load(model_path), strict=True)
