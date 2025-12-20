@@ -876,14 +876,17 @@ class WanVideoSampler:
         latent = noise
 
         # LongCat-Avatar
-        longcat_ref_latent = image_embeds.get("longcat_ref_latent", None)
-        if longcat_ref_latent is not None:
-            latent = torch.cat([longcat_ref_latent.to(latent), latent], dim=1)
-            seq_len = math.ceil((latent.shape[2] * latent.shape[3]) / 4 * latent.shape[1])
-            insert_len = longcat_ref_latent.shape[1]
-            clean_latent_indices = list(range(0, insert_len)) + [i + insert_len for i in clean_latent_indices]
-            latent_video_length += insert_len
-            print("clean_latent_indices:", clean_latent_indices)
+        longcat_ref_latent = None
+        longcat_avatar_options = image_embeds.get("longcat_avatar_options", None)
+        if longcat_avatar_options is not None:
+            longcat_ref_latent = image_embeds.get("longcat_ref_latent", None)
+            if longcat_ref_latent is not None:
+                latent = torch.cat([longcat_ref_latent.to(latent), latent], dim=1)
+                seq_len = math.ceil((latent.shape[2] * latent.shape[3]) / 4 * latent.shape[1])
+                insert_len = longcat_ref_latent.shape[1]
+                clean_latent_indices = list(range(0, insert_len)) + [i + insert_len for i in clean_latent_indices]
+                latent_video_length += insert_len
+                log.info(f"LongCat clean_latent_indices: {clean_latent_indices}")
         audio_stride = 2 if transformer.is_longcat else 1
 
         #controlnet
@@ -1566,6 +1569,7 @@ class WanVideoSampler:
                     "flashvsr_strength": flashvsr_strength, # FlashVSR strength
                     "longcat_num_cond_latents": len(clean_latent_indices) if transformer.is_longcat else 0,
                     "longcat_num_ref_latents": longcat_ref_latent.shape[1] if longcat_ref_latent is not None else 0,
+                    "longcat_avatar_options": longcat_avatar_options, # LongCat avatar attention options
                     "sdancer_input": sdancer_input, # SteadyDancer input
                     "one_to_all_input": one_to_all_data, # One-to-All input
                     "one_to_all_controlnet_strength": one_to_all_data["controlnet_strength"] if one_to_all_data is not None else 0.0,

@@ -1003,7 +1003,7 @@ class WanAttentionBlock(nn.Module):
         humo_audio_input=None, humo_audio_scale=1.0, #humo audio
         lynx_x_ip=None, lynx_ref_feature=None, lynx_ip_scale=1.0, lynx_ref_scale=1.0, #lynx
         x_ovi=None, e_ovi=None, freqs_ovi=None, context_ovi=None, seq_lens_ovi=None, grid_sizes_ovi=None,
-        longcat_num_cond_latents=0, #longcat image cond amount
+        longcat_num_cond_latents=0, longcat_avatar_options=None, #longcat image cond amount
         x_onetoall_ref=None, onetoall_freqs=None, onetoall_ref=None, onetoall_ref_scale=1.0, #one-to-all
         e_tr=None, tr_num=0, tr_start=0, #token replacement
     ):
@@ -1212,9 +1212,9 @@ class WanAttentionBlock(nn.Module):
                     # process the noise tokens
                     q_noise = q[:, num_cond_latents_thw:].contiguous()
                     start_noise, end_noise, num_noisy_frames = 0, 0, num_latent_frames - longcat_num_cond_latents
-                    mask_frame_range = 3 #todo: make it configurable?
-                    ref_img_index = 10 #todo: make it configurable?
-                    num_ref_latents = 1 # todo: make it configurable?
+                    mask_frame_range = longcat_avatar_options["ref_mask_frame_range"]
+                    ref_img_index = longcat_avatar_options["ref_frame_index"]
+                    num_ref_latents = 1
                     if mask_frame_range is not None and mask_frame_range > 0:
                         start_noise = ref_img_index - mask_frame_range - longcat_num_cond_latents + num_ref_latents
                         end_noise   = ref_img_index + mask_frame_range - longcat_num_cond_latents + num_ref_latents + 1
@@ -2313,7 +2313,7 @@ class WanModel(torch.nn.Module):
         lynx_embeds=None,
         x_ovi=None, seq_len_ovi=None, ovi_negative_text_embeds=None,
         flashvsr_LQ_latent=None, flashvsr_strength=1.0,
-        longcat_num_cond_latents=0, longcat_num_ref_latents=0, # for LongCat
+        longcat_num_cond_latents=0, longcat_num_ref_latents=0, longcat_avatar_options=None, # for LongCat
         add_text_emb=None,
         sdancer_input=None,  # SteadyDancer
         one_to_all_input=None, one_to_all_controlnet_strength=0.0, # One-to-All
@@ -2709,18 +2709,13 @@ class WanModel(torch.nn.Module):
                 e_token_replace = self.time_embedding(sinusoidal_embedding_1d(self.freq_dim, t_token_replace.flatten()).to(time_embed_dtype))  # b, dim
                 e0_token_replace = self.time_projection(e_token_replace).unflatten(1, (6, self.dim))  # b, 6, dim
         else:
-            print("input t shape:", t.shape)
-            print("F:", F)
             time_embed_dtype = self.time_embedding.mlp[0].weight.dtype
             if time_embed_dtype not in [torch.float16, torch.bfloat16, torch.float32]:
                 time_embed_dtype = self.base_dtype
             if len(t.shape) == 1:
                 t = t.unsqueeze(1).expand(-1, F) # [B, T]
-            print("t expanded shape:", t.shape)
             self.time_embedding.to(torch.float32)
-            print("t float shape:", t.float().flatten().shape)
             e = e0 = self.time_embedding(t.float().flatten(), dtype=torch.float32)#.reshape(1, F, -1)
-            print("e0 shape:", e0.shape)
             e = e0 = e0.reshape(1, F, -1)
 
         if self.audio_model is not None:
@@ -2861,7 +2856,7 @@ class WanModel(torch.nn.Module):
             human_num = len(multitalk_audio_embedding)
 
             # LongCat-Avatar specific
-            print("longcat_num_cond_latents:", longcat_num_cond_latents, "longcat_num_ref_latents:", longcat_num_ref_latents)
+            tqdm.write(f"longcat_num_cond_latents: {longcat_num_cond_latents}, longcat_num_ref_latents: {longcat_num_ref_latents}")
 
             if longcat_num_ref_latents > 0:
                 audio_start_ref = multitalk_audio_embedding[:, [0], :, :] # padding
@@ -3070,6 +3065,7 @@ class WanModel(torch.nn.Module):
                 lynx_ip_scale=lynx_ip_scale,
                 lynx_ref_scale=lynx_ref_scale,
                 longcat_num_cond_latents=longcat_num_cond_latents,
+                longcat_avatar_options=longcat_avatar_options,
                 onetoall_ref_scale=onetoall_ref_scale,
                 e_tr=e0_token_replace if use_token_replace else None,
                 tr_start=token_replace_start,
