@@ -1582,8 +1582,8 @@ class WanVideoSampler:
                                 vace_data=vace_data, attn_cond=attn_cond, **base_params)
                                 noise_pred_no_portrait = noise_pred_no_portrait[0]
                                 return noise_pred_no_portrait + portrait_cfg[idx] * (noise_pred_cond - noise_pred_no_portrait), noise_pred_ovi, [cache_state_cond, cache_state_uncond]
-                        else:
-                            return noise_pred_cond, noise_pred_ovi, [cache_state_cond]
+                            else:
+                                return noise_pred_cond, noise_pred_ovi, [cache_state_cond]
 
                         #unconditional (negative) pass
                         base_params['is_uncond'] = True
