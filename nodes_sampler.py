@@ -659,12 +659,10 @@ class WanVideoSampler:
         fantasy_portrait_embeds = image_embeds.get("portrait_embeds", None)
         if fantasy_portrait_embeds is not None:
             log.info("Using FantasyPortrait embeddings")
-            fantasy_portrait_input = {
-                "adapter_proj": fantasy_portrait_embeds.get("adapter_proj", None),
-                "strength": fantasy_portrait_embeds.get("strength", 1.0),
-                "start_percent": fantasy_portrait_embeds.get("start_percent", 0.0),
-                "end_percent": fantasy_portrait_embeds.get("end_percent", 1.0),
-            }
+            fantasy_portrait_input = fantasy_portrait_embeds.copy()
+            portrait_cfg = fantasy_portrait_input.get("cfg_scale", 1.0)
+            if not isinstance(portrait_cfg, list):
+                portrait_cfg = [portrait_cfg] * (steps + 1)
 
         # MiniMax Remover
         minimax_latents = minimax_mask_latents = None
@@ -1577,6 +1575,14 @@ class WanVideoSampler:
                         if math.isclose(cfg_scale, 1.0):
                             if use_fresca:
                                 noise_pred_cond = fourier_filter(noise_pred_cond, fresca_scale_low, fresca_scale_high, fresca_freq_cutoff)
+                            if fantasy_portrait_input is not None and not math.isclose(portrait_cfg[idx], 1.0):
+                                print("Applying Fantasy Portrait CFG...")
+                                base_params["fantasy_portrait_input"] = None
+                                noise_pred_no_portrait, noise_pred_ovi, cache_state_uncond = transformer(context=positive_embeds, pred_id=cache_state[0] if cache_state else None,
+                                vace_data=vace_data, attn_cond=attn_cond, **base_params)
+                                noise_pred_no_portrait = noise_pred_no_portrait[0]
+                                return noise_pred_no_portrait + portrait_cfg[idx] * (noise_pred_cond - noise_pred_no_portrait), noise_pred_ovi, [cache_state_cond, cache_state_uncond]
+                        else:
                             return noise_pred_cond, noise_pred_ovi, [cache_state_cond]
 
                         #unconditional (negative) pass
