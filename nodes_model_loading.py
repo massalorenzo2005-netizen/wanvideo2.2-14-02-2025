@@ -1128,7 +1128,7 @@ class WanVideoModelLoader:
         scale_weights = {}
         if "fp8" in quantization:
             for k, v in sd.items():
-                if k.endswith(".scale_weight"):
+                if k.endswith(".scale_weight") or k.endswith(".weight_scale"):
                     is_scaled_fp8 = True
                     break
 
