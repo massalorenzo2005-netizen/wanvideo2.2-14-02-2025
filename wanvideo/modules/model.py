@@ -1015,6 +1015,11 @@ class WanAttentionBlock(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
+        input_dtype = x.dtype
+        B, N, C = x.shape
+        T = num_latent_frames
+        is_longcat = C == 4096
+
         zero_timestep = len(e) == 2
         if zero_timestep: #s2v zero timestep
             self.seg_idx = e[1]
@@ -1030,11 +1035,10 @@ class WanAttentionBlock(nn.Module):
             tr_end = tr_start + (tr_num or 0)
 
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.get_mod(e.to(x.device), self.modulation)
-        #del e
-        input_dtype = x.dtype
-        B, N, C = x.shape
-        T = num_latent_frames
-        is_longcat = C == 4096
+        if multitalk_audio_embedding is not None and is_longcat:
+            audio_shift_mca, audio_scale_mca, audio_gate_mca = self.audio_modulation(e[:, longcat_num_cond_latents:]).unsqueeze(2).chunk(3, dim=-1)
+        del e
+
         if is_longcat:
             input_x = self.modulate(self.norm1(x.view(B, T, -1, C).to(shift_msa.dtype)), shift_msa, scale_msa, seg_idx=self.seg_idx).to(input_dtype).view(B, N, C)
         elif use_token_replace:
@@ -1184,31 +1188,20 @@ class WanAttentionBlock(nn.Module):
         elif is_longcat and longcat_num_cond_latents > 0:
             if longcat_num_cond_latents == 1:
                 num_cond_latents_thw = longcat_num_cond_latents * (N // num_latent_frames)
+                # process the noise tokens
+                x_noise = self.self_attn.forward(q[:, num_cond_latents_thw:].contiguous(), k, v, seq_lens)
                 # process the condition tokens
                 x_cond = self.self_attn.forward(
                     q[:, :num_cond_latents_thw].contiguous(),
                     k[:, :num_cond_latents_thw].contiguous(),
                     v[:, :num_cond_latents_thw].contiguous(),
                     seq_lens)
-                # process the noise tokens
-                x_noise = self.self_attn.forward(q[:, num_cond_latents_thw:].contiguous(), k, v, seq_lens)
                 # merge x_cond and x_noise
                 y = torch.cat([x_cond, x_noise], dim=1).contiguous()
             elif longcat_num_cond_latents > 1: # video continuation
                 num_ref_latents_thw = (N // num_latent_frames)
                 num_cond_latents_thw = longcat_num_cond_latents * (N // num_latent_frames)
-                # process the condition tokens
-                q_ref = q[:, :num_ref_latents_thw].contiguous()
-                k_ref = k[:, :num_ref_latents_thw].contiguous()
-                v_ref = v[:, :num_ref_latents_thw].contiguous()
-                q_cond = q[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
-                k_cond = k[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
-                v_cond = v[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
-                x_ref = self.self_attn.forward(q_ref, k_ref, v_ref, seq_lens)
-                x_cond = self.self_attn.forward(q_cond, k_cond, v_cond, seq_lens)
-                if longcat_num_cond_latents == num_latent_frames:
-                    y = torch.cat([x_ref, x_cond], dim=1).contiguous()
-                else:
+                if not longcat_num_cond_latents == num_latent_frames:
                     # process the noise tokens
                     q_noise = q[:, num_cond_latents_thw:].contiguous()
                     start_noise, end_noise, num_noisy_frames = 0, 0, num_latent_frames - longcat_num_cond_latents
@@ -1237,12 +1230,22 @@ class WanAttentionBlock(nn.Module):
                         x_noise = torch.cat([x_noise_front, x_noise_maskref, x_noise_back], dim=1).contiguous()
                     else:
                         x_noise = self.self_attn.forward(q_noise, k, v, seq_lens)
-                    # merge x_cond and x_noise
-                    y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
+                # process the condition tokens
+                q_ref = q[:, :num_ref_latents_thw].contiguous()
+                k_ref = k[:, :num_ref_latents_thw].contiguous()
+                v_ref = v[:, :num_ref_latents_thw].contiguous()
+                q_cond = q[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                k_cond = k[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                v_cond = v[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                x_ref = self.self_attn.forward(q_ref, k_ref, v_ref, seq_lens)
+                x_cond = self.self_attn.forward(q_cond, k_cond, v_cond, seq_lens)
+
+                # merge x_cond and x_noise
+                y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
         else:
             y = self.self_attn.forward(q, k, v, seq_lens, lynx_ref_feature=lynx_ref_feature, lynx_ref_scale=lynx_ref_scale, onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale)
 
-        del q, k, v,
+        del q, k, v
 
         # FETA
         if enhance_enabled:
@@ -1317,8 +1320,6 @@ class WanAttentionBlock(nn.Module):
                     if is_longcat:
                         audio_output_cond, x_audio = self.audio_cross_attn(self.norm_x(x.to(self.norm_x.weight.dtype)).to(input_dtype), multitalk_audio_embedding, num_latent_frames=num_latent_frames,
                                                         num_cond_latents=longcat_num_cond_latents, x_ref_attn_map=x_ref_attn_map, human_num=human_num)
-
-                        audio_shift_mca, audio_scale_mca, audio_gate_mca = self.audio_modulation(e[:, longcat_num_cond_latents:]).unsqueeze(2).chunk(3, dim=-1) # [B, T, 1, C]
                         x_audio = self.modulate(self.norm1(x_audio.view(B, T-longcat_num_cond_latents, -1, C).to(audio_shift_mca.dtype)), audio_shift_mca, audio_scale_mca, seg_idx=self.seg_idx).to(input_dtype).view(B, -1, C)
                         x_audio = (x_audio.view(B, T-longcat_num_cond_latents, -1, C).float() * audio_gate_mca).to(input_dtype).view(B, -1, C)
                         if audio_output_cond is not None:
@@ -1365,7 +1366,7 @@ class WanAttentionBlock(nn.Module):
                     mod_x = torch.addcmul(shift_mlp, self.norm2(x.to(shift_mlp.dtype)), 1 + scale_mlp)
 
                 del shift_mlp, scale_mlp
-                x_ffn = self.ffn_chunked(mod_x.to(input_dtype), num_chunks=1)
+                x_ffn = self.ffn_chunked(mod_x.to(input_dtype), num_chunks=2 if is_longcat else 1)
                 del mod_x
 
         # gate_mlp
