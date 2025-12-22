@@ -1591,6 +1591,8 @@ class WanVideoModelLoader:
 
         sd = {k.replace(".weight_scale", ".scale_weight"): v for k, v in sd.items()}
 
+        sd = {k.replace(".weight_scale", ".scale_weight"): v for k, v in sd.items()}
+
         # FlashVSR
         if "LQ_proj_in.norm1.gamma" in sd:
             log.info("FlashVSR model detected, patching model...")
