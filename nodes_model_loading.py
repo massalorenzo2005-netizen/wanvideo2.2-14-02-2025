@@ -1153,7 +1153,7 @@ class WanVideoModelLoader:
         # currently this can be VACE, MTV-Crafter, Lynx or Ovi-audio weights
         if extra_model is not None:
             for _model in extra_model:
-                print("Loading extra model: ", _model["path"])
+                log.info(f"Loading extra model: {_model['path']}")
                 if gguf:
                     if not _model["path"].endswith(".gguf"):
                         raise ValueError("With GGUF main model the extra model must also be GGUF quantized, if the main model already has VACE included, you can disconnect the extra module loader")

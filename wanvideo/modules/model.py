@@ -2210,7 +2210,6 @@ class WanModel(torch.nn.Module):
                 torch.tensor([ref_frame_index], dtype=dtype, device=device),
                 torch.arange(0, steps_t - longcat_num_ref_latents, dtype=dtype, device=device)
             ], dim=0)
-            print("grid_t:", grid_t)
             img_ids[:, :, :, 0] = img_ids[:, :, :, 0] + grid_t.reshape(-1, 1, 1)
         else:
             # Standard temporal encoding
@@ -2639,7 +2638,6 @@ class WanModel(torch.nn.Module):
                 self.cached_key == cache_key):
                 freqs = self.cached_freqs
             else:
-                log.info("Generating new RoPE frequencies")
                 freqs = self.rope_encode_comfy(
                     F, H, W,
                     freq_offset=freq_offset,
@@ -2650,6 +2648,7 @@ class WanModel(torch.nn.Module):
                     device=x.device,
                     dtype=x.dtype
                 )
+                log.info("Generated new RoPE frequencies")
 
                 if s2v_ref_latent is not None:
                     freqs_ref = self.rope_encode_comfy(
@@ -2855,8 +2854,6 @@ class WanModel(torch.nn.Module):
             human_num = len(multitalk_audio_embedding)
 
             # LongCat-Avatar specific
-            tqdm.write(f"longcat_num_cond_latents: {longcat_num_cond_latents}, longcat_num_ref_latents: {longcat_num_ref_latents}")
-
             if longcat_num_ref_latents > 0:
                 audio_start_ref = multitalk_audio_embedding[:, [0], :, :] # padding
                 multitalk_audio_embedding = torch.cat([audio_start_ref, multitalk_audio_embedding], dim=1).contiguous()
