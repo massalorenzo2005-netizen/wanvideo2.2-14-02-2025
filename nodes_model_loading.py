@@ -1605,6 +1605,24 @@ class WanVideoModelLoader:
                     block.ref_attn_v_img = nn.Linear(in_features, out_features)
                     block.ref_attn_norm_k_img = WanRMSNorm(out_features, eps=1e-6)
 
+        if "blocks.0.control_blocks_dense.cross_attn.k.weight" in sd:
+            log.info("LongVie2 model detected, patching model...")
+            from .LongVie2.modules import WanModelDualControl
+            control_layers = 12
+            with init_empty_weights():
+                dual_controller = WanModelDualControl(dim=5120, ffn_dim=13824, eps=1e-06, num_heads=40, control_layers=control_layers)
+                for b in range(control_layers):
+                    transformer.blocks[b].control_blocks_dense = dual_controller.control_blocks_dense[b]
+                    transformer.blocks[b].control_blocks_sparse = dual_controller.control_blocks_sparse[b]
+                    transformer.blocks[b].control_combine_linears = dual_controller.control_combine_linears[b]
+                transformer.dual_controller = nn.Module()
+                transformer.dual_controller.control_initial_combine_linear_dense = dual_controller.control_initial_combine_linear_dense
+                transformer.dual_controller.control_initial_combine_linear_sparse = dual_controller.control_initial_combine_linear_sparse
+                transformer.dual_controller.control_t_mod = dual_controller.control_t_mod
+                transformer.dual_controller.control_text_linear = dual_controller.control_text_linear
+                transformer.dual_controller_freqs = dual_controller.freqs
+
+
         comfy_model.diffusion_model = transformer
         comfy_model.load_device = transformer_load_device
         patcher = comfy.model_patcher.ModelPatcher(comfy_model, device, offload_device)

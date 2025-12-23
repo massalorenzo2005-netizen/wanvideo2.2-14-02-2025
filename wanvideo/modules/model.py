@@ -2318,6 +2318,7 @@ class WanModel(torch.nn.Module):
         sdancer_input=None,  # SteadyDancer
         one_to_all_input=None, one_to_all_controlnet_strength=0.0, # One-to-All
         scail_input=None,  # SCAIL pose
+        dual_control_input=None,  # LongVie2 dual controlnet
     ):
         r"""
         Forward pass through the diffusion model
@@ -2340,6 +2341,7 @@ class WanModel(torch.nn.Module):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
+        print("input x shape:", x[0].shape)
         # Stand-In only used on first positive pass, then cached in kv_cache
         if is_uncond or current_step > 0:
             standin_input = None
@@ -2543,6 +2545,20 @@ class WanModel(torch.nn.Module):
         f, h, w = x[0].shape[2:]
         x = [u.flatten(2).transpose(1, 2) for u in x]
         self.original_seq_len = x[0].shape[1]
+
+        prev_latent = None
+        if dual_control_input is not None:
+            prev_latent = dual_control_input.get("prev_latent", None)
+            if prev_latent is not None:
+                F += prev_latent.shape[2]
+                print("Using Dual ControlNet prev latent shape:", prev_latent.shape)
+                prev_x = [self.original_patch_embedding(u.unsqueeze(0).to(torch.float32)).to(x[0].dtype) for u in prev_latent]
+                prev_x = [u.flatten(2).transpose(1, 2).to(self.base_dtype) for u in prev_x]
+                print("Dual ControlNet prev_x shape:", prev_x[0].shape)
+                print("x shape before concat:", x[0].shape)
+                seq_len += prev_x[0].shape[1]
+                print("F updated to:", F)
+                x = [torch.cat([u, v], dim=1) for u, v in zip(prev_x, x)]
 
         # SCAIL pose
         if scail_input is not None:
@@ -2833,6 +2849,44 @@ class WanModel(torch.nn.Module):
             context = None
             chunked_self_attention = False
             seq_chunks = 0
+
+        # dual control
+        if dual_control_input is not None and dual_control_input["start_percent"] <= current_step_percentage <= dual_control_input["end_percent"]:
+            dense_latent = dual_control_input["dense_input_latent"]
+            print("dense_latent shape:", dense_latent.shape)
+            sparse_latent = dual_control_input["sparse_input_latent"]
+            if dense_latent is None and sparse_latent is None:
+                raise ValueError("At least one of dense_input_latent or sparse_input_latent must be provided in dual_control_input")
+
+            if dense_latent is not None:
+                dense_x = [self.original_patch_embedding(u.unsqueeze(0).to(torch.float32)).to(x[0].dtype) for u in dense_latent]
+                dense_x = [u.flatten(2).transpose(1, 2).to(self.base_dtype) for u in dense_x]
+                dense = self.dual_controller.control_initial_combine_linear_dense(dense_x[0])
+
+            if sparse_latent is not None:
+                sparse_x = [self.original_patch_embedding(u.unsqueeze(0).to(torch.float32)).to(x[0].dtype) for u in sparse_latent]
+                sparse_x = [u.flatten(2).transpose(1, 2).to(self.base_dtype) for u in sparse_x]
+                sparse = self.dual_controller.control_initial_combine_linear_sparse(sparse_x[0])
+
+            if dense_latent is None:
+                dense = torch.zeros_like(sparse)
+            elif sparse_latent is None:
+                sparse = torch.zeros_like(dense)
+
+            control_context = clip_fea_control = None
+            if context != []:
+                control_context = self.dual_controller.control_text_linear(context)
+                if clip_embed is not None:
+                    clip_fea_control = self.dual_controller.control_text_linear(clip_embed)
+            control_t_mod = self.dual_controller.control_t_mod(e0)
+
+            control_freqs = torch.cat([
+                self.dual_controller_freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+                self.dual_controller_freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+                self.dual_controller_freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
+            ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
+        else:
+            dual_control_input = None
 
         # MultiTalk
         if multitalk_audio is not None:
@@ -3173,6 +3227,18 @@ class WanModel(torch.nn.Module):
                 x, x_ip, lynx_ref_feature, x_ovi = block(x, x_ip=x_ip, lynx_ref_feature=lynx_ref_feature, x_ovi=x_ovi, x_onetoall_ref=x_onetoall_ref, onetoall_freqs=onetoall_freqs, **kwargs)
                 # ---post block----#
 
+                # dual controlnet
+                if dual_control_input is not None and (hasattr(block, "control_blocks_dense") or hasattr(block, "control_blocks_sparse")):
+                    if dense_latent is not None and hasattr(block, "control_blocks_dense"):
+                        dense = block.control_blocks_dense(dense, control_context, control_t_mod, control_freqs, clip_fea=clip_fea_control)
+                    if sparse_latent is not None and hasattr(block, "control_blocks_sparse"):
+                        sparse = block.control_blocks_sparse(sparse, control_context, control_t_mod, control_freqs, clip_fea=clip_fea_control)
+
+                    if prev_latent is not None:
+                        x[:, -self.original_seq_len:] += block.control_combine_linears(dense + sparse) * dual_control_input["strength"]
+                    else:
+                        x += block.control_combine_linears(dense + sparse) * dual_control_input["strength"]
+
                 if self.audio_injector is not None and s2v_audio_input is not None:
                     x = self.audio_injector_forward(b, x, merged_audio_emb, scale=s2v_audio_scale) #s2v
                 if block.has_face_fuser_block and motion_vec is not None:
@@ -3275,8 +3341,10 @@ class WanModel(torch.nn.Module):
         #    x = x[:, :self.original_seq_len]
             #grid_sizes = torch.stack([torch.tensor([u[0] - 1, u[1], u[2]]) for u in grid_sizes]).to(grid_sizes.device)
 
-
-        x = x[:, :self.original_seq_len]
+        if prev_latent is not None:
+            x = x[:, -self.original_seq_len:]
+        else:
+            x = x[:, :self.original_seq_len]
 
         x = self.head(x, e.to(x.device), temp_length=F,
                       e_tr=e_token_replace.to(x.device) if use_token_replace else None, tr_start=token_replace_start, tr_num=replace_token_num)

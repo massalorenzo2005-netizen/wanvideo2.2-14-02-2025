@@ -49,6 +49,7 @@ OPTIONAL_MODULES = [
     (".WanMove.nodes", "WanMove"),
     (".SCAIL.nodes", "SCAIL"),
     (".LongCat.nodes", "LongCat"),
+    (".LongVie2.nodes", "LongVie2"),
 ]
 
 def register_nodes(module_path: str, name: str, optional: bool) -> None:
