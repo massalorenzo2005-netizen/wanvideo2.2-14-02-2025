@@ -48,8 +48,8 @@ class WanVideoAddDualControlEmbeds:
 
         vae.to(device)
         if dense is not None:
-            dense_images = dense[..., :3].permute(3, 0, 1, 2) * 2 - 1
-            dense_images = 1 - dense_images  # Invert colors for depth to match the usual range in comfy
+            dense_images = 1 - dense[..., :3] # Invert colors for depth to match the usual range in comfy
+            dense_images = dense_images.permute(3, 0, 1, 2) * 2 - 1
             dense_video_latent = vae.encode([dense_images.to(device, vae.dtype)], device, tiled=False)
             dense_first = (dense_images[:, :1]).to(device, vae.dtype)
             vae_input_dense = torch.cat([dense_first, torch.zeros(3, num_frames-1, height, width, device=device, dtype=vae.dtype)], dim=1)
