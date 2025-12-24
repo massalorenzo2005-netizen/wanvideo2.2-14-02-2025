@@ -1267,6 +1267,64 @@ class WanAttentionBlock(nn.Module):
 
                 # merge x_cond and x_noise
                 y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
+            y = self.self_attn.forward(q, full_k, full_v, seq_lens)
+        elif is_longcat and longcat_num_cond_latents > 0:
+            if longcat_num_cond_latents == 1:
+                num_cond_latents_thw = longcat_num_cond_latents * (N // num_latent_frames)
+                # process the noise tokens
+                x_noise = self.self_attn.forward(q[:, num_cond_latents_thw:].contiguous(), k, v, seq_lens)
+                # process the condition tokens
+                x_cond = self.self_attn.forward(
+                    q[:, :num_cond_latents_thw].contiguous(),
+                    k[:, :num_cond_latents_thw].contiguous(),
+                    v[:, :num_cond_latents_thw].contiguous(),
+                    seq_lens)
+                # merge x_cond and x_noise
+                y = torch.cat([x_cond, x_noise], dim=1).contiguous()
+            elif longcat_num_cond_latents > 1: # video continuation
+                num_ref_latents_thw = (N // num_latent_frames)
+                num_cond_latents_thw = longcat_num_cond_latents * (N // num_latent_frames)
+                if not longcat_num_cond_latents == num_latent_frames:
+                    # process the noise tokens
+                    q_noise = q[:, num_cond_latents_thw:].contiguous()
+                    start_noise, end_noise, num_noisy_frames = 0, 0, num_latent_frames - longcat_num_cond_latents
+                    mask_frame_range = longcat_avatar_options["ref_mask_frame_range"]
+                    ref_img_index = longcat_avatar_options["ref_frame_index"]
+                    num_ref_latents = 1
+                    if mask_frame_range is not None and mask_frame_range > 0:
+                        start_noise = ref_img_index - mask_frame_range - longcat_num_cond_latents + num_ref_latents
+                        end_noise   = ref_img_index + mask_frame_range - longcat_num_cond_latents + num_ref_latents + 1
+
+                    if start_noise >= 0 and end_noise > start_noise and end_noise <= num_noisy_frames:
+                        # remove attention with the reference image in the target range, preventing repeated actions.
+
+                        start_pos = start_noise * (N // num_latent_frames)
+                        end_pos   = end_noise * (N // num_latent_frames)
+
+                        q_noise_front = q_noise[:, :start_pos].contiguous()
+                        q_noise_maskref = q_noise[:, start_pos:end_pos].contiguous()
+                        q_noise_back = q_noise[:, end_pos:].contiguous()
+                        k_non_ref = k[:, num_ref_latents_thw:].contiguous()
+                        v_non_ref = v[:, num_ref_latents_thw:].contiguous()
+
+                        x_noise_front = self.self_attn.forward(q_noise_front, k, v, seq_lens) # q_front has attention with ref + cond + noisy
+                        x_noise_back = self.self_attn.forward(q_noise_back, k, v, seq_lens) # q_back has attention with ref + cond + noisy
+                        x_noise_maskref = self.self_attn.forward(q_noise_maskref, k_non_ref, v_non_ref, seq_lens) # q_mask has attention with cond+noisy
+                        x_noise = torch.cat([x_noise_front, x_noise_maskref, x_noise_back], dim=1).contiguous()
+                    else:
+                        x_noise = self.self_attn.forward(q_noise, k, v, seq_lens)
+                # process the condition tokens
+                q_ref = q[:, :num_ref_latents_thw].contiguous()
+                k_ref = k[:, :num_ref_latents_thw].contiguous()
+                v_ref = v[:, :num_ref_latents_thw].contiguous()
+                q_cond = q[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                k_cond = k[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                v_cond = v[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
+                x_ref = self.self_attn.forward(q_ref, k_ref, v_ref, seq_lens)
+                x_cond = self.self_attn.forward(q_cond, k_cond, v_cond, seq_lens)
+
+                # merge x_cond and x_noise
+                y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
         else:
             y = self.self_attn.forward(q, k, v, seq_lens, lynx_ref_feature=lynx_ref_feature, lynx_ref_scale=lynx_ref_scale,
                                        onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale, attention_mode_override=attention_mode_override, transformer_options=transformer_options, frame_tokens=frame_tokens)
