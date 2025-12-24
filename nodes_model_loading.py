@@ -1128,7 +1128,7 @@ class WanVideoModelLoader:
         scale_weights = {}
         if "fp8" in quantization:
             for k, v in sd.items():
-                if k.endswith(".scale_weight"):
+                if k.endswith(".scale_weight") or k.endswith(".weight_scale"):
                     is_scaled_fp8 = True
                     break
 
@@ -1153,7 +1153,7 @@ class WanVideoModelLoader:
         # currently this can be VACE, MTV-Crafter, Lynx or Ovi-audio weights
         if extra_model is not None:
             for _model in extra_model:
-                print("Loading extra model: ", _model["path"])
+                log.info(f"Loading extra model: {_model['path']}")
                 if gguf:
                     if not _model["path"].endswith(".gguf"):
                         raise ValueError("With GGUF main model the extra model must also be GGUF quantized, if the main model already has VACE included, you can disconnect the extra module loader")
@@ -1479,6 +1479,39 @@ class WanVideoModelLoader:
 
             sd.update(extra_sd)
             del extra_sd
+        elif "multitalk_audio_proj.proj1.weight" in sd:
+            log.info("MultiTalk/InfiniteTalk model detected, patching model...")
+            from .multitalk.multitalk import AudioProjModel
+            from .wanvideo.modules.model import WanLayerNorm
+            from .LongCat.layers import SingleStreamAttention
+
+            audio_window = 5
+            vae_scale = 4
+
+            for block in transformer.blocks:
+                with init_empty_weights():
+                    if "blocks.0.audio_modulation.1.weight" in sd:
+                        block.audio_modulation = nn.Sequential(nn.SiLU(), nn.Linear(512, 3 * dim, bias=True))
+                    block.norm_x = WanLayerNorm(dim, transformer.eps, elementwise_affine=True)
+                    block.audio_cross_attn = SingleStreamAttention(
+                            dim=dim,
+                            encoder_hidden_states_dim=768,
+                            num_heads=num_heads,
+                        qkv_bias=True,
+                        qk_norm=True,
+                        class_range=24,
+                        class_interval=4,
+                        attention_mode=attention_mode,
+                    )
+                    multitalk_proj_model = AudioProjModel(
+                            seq_len=audio_window,
+                            seq_len_vf=audio_window+vae_scale-1,
+                            intermediate_dim=512,
+                            output_dim=768,
+                            context_tokens=32,
+                            norm_output_audio=True,
+                    )
+            transformer.multitalk_audio_proj = multitalk_proj_model
 
         sd = {k.replace(".weight_scale", ".scale_weight"): v for k, v in sd.items()}
 
