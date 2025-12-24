@@ -634,8 +634,7 @@ class WanT2VCrossAttention(WanSelfAttention):
     def forward(self, x, context, grid_sizes=None, clip_embed=None, audio_proj=None, audio_scale=1.0,
                 num_latent_frames=21, nag_params={}, nag_context=None, rope_func="comfy",
                 inner_t=None, inner_c=None, cross_freqs=None,
-                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, lynx_x_ip=None, lynx_ip_scale=1.0, longcat_num_cond_latents=None, g=0.0, scale_keys=True,
-                energy_low=1.0, energy_high=2.0, **kwargs):
+                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, lynx_x_ip=None, lynx_ip_scale=1.0, longcat_num_cond_latents=None, g=0.0, scale_keys=True, **kwargs):
         b, n, d = x.size(0), self.num_heads, self.head_dim
         s = x.size(1)
         # compute query
@@ -672,7 +671,7 @@ class WanT2VCrossAttention(WanSelfAttention):
                     q_flat = q.reshape(-1, n, d).permute(1, 0, 2)  # n, (b*h), d
                     k_flat = k.reshape(-1, n, d).permute(1, 0, 2)  # n, (b*h), d
                     E = compute_energy(q_flat, k_flat)  # scalar
-                    gamma_e = sigmoid_rescale(E, low=energy_low, high=energy_high)  # f(·) in Eq. (10)
+                    gamma_e = sigmoid_rescale(E)  # f(·) in Eq. (10)
 
                 # Combine energy-based gamma_e with scheduled gain.
                 # Effective factor: 1 + g, then multiply by gamma_e.
@@ -751,8 +750,7 @@ class WanI2VCrossAttention(WanSelfAttention):
 
     def forward(self, x, context, grid_sizes=None, clip_embed=None, audio_proj=None,
                 audio_scale=1.0, num_latent_frames=21, nag_params={}, nag_context=None, rope_func="comfy",
-                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, g=0.0, scale_keys=True,
-                energy_low=1.0, energy_high=2.0, **kwargs):
+                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, g=0.0, scale_keys=True, **kwargs):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
@@ -915,7 +913,6 @@ class WanAttentionBlock(nn.Module):
         self.has_face_fuser_block = face_fuser_block
         self.ref_attn_k_img = None
         self.ref_attn_v_img = None
-        self.alignvid_scheduler = None
 
         # layers
         self.norm1 = WanLayerNorm(self.dim, eps)
@@ -1313,19 +1310,13 @@ class WanAttentionBlock(nn.Module):
             # AlignVid ASM with BGS + SGS   [web:20]
             # ==============================
             g = 0
-            scale_keys = True
-            energy_low = 1.0
-            energy_high = 2.0
-            if self.alignvid_scheduler is not None:
+            if alignvid_scheduler is not None:
                 # g^(l,t) as in Eq. (14) [web:20]
-                g = self.alignvid_scheduler.get_scale(
+                g = alignvid_scheduler.get_scale(
                     l=self.block_idx,
                     t=current_step.item(),
                 )
                 log.info(f"g(scale) at block {self.block_idx}, step {current_step.item()}: {g}")
-                scale_keys = self.alignvid_scheduler.scale_keys
-                energy_low = self.alignvid_scheduler.energy_low
-                energy_high = self.alignvid_scheduler.energy_high
 
             if x_ovi is not None:
                 #audio
@@ -1347,9 +1338,7 @@ class WanAttentionBlock(nn.Module):
                                         target_grid_sizes=grid_sizes_ovi, 
                                         target_freqs=freqs_ovi,
                                         g=g,
-                                        scale_keys=scale_keys,
-                                        energy_low=energy_low,
-                                        energy_high=energy_high,)
+                                        scale_keys=alignvid_scheduler.scale_keys,)
             elif split_attn:
                 if nag_context is not None:
                     raise NotImplementedError("nag_context is not supported in split_cross_attn_ffn")
@@ -1361,9 +1350,8 @@ class WanAttentionBlock(nn.Module):
                                     rope_func=self.rope_func, inner_t=inner_t, inner_c=inner_c, cross_freqs=cross_freqs,
                                     adapter_proj=adapter_proj, ip_scale=ip_scale, orig_seq_len=original_seq_len, lynx_x_ip=lynx_x_ip, lynx_ip_scale=lynx_ip_scale, longcat_num_cond_latents=longcat_num_cond_latents,
                                     g=g,
-                                    scale_keys=scale_keys,
-                                    energy_low=energy_low,
-                                    energy_high=energy_high,)
+                                    scale_keys=alignvid_scheduler.scale_keys,
+                                    )
                 x = x.to(input_dtype)
                 # MultiTalk
                 if multitalk_audio_embedding is not None and not isinstance(self, VaceWanAttentionBlock):
@@ -1900,6 +1888,8 @@ class WanModel(torch.nn.Module):
         self.audio_model = None
 
         self.is_longcat = is_longcat
+
+        self.use_alignvid = True
 
         # embeddings
         if not self.is_ovi_audio_model:
@@ -2719,10 +2709,12 @@ class WanModel(torch.nn.Module):
         # Stand-In RoPE frequencies
         if x_ip is not None:
             # Generate RoPE frequencies for x_ip
+            h_len = (H + 1) // 2
+            w_len = (W + 1) // 2
             ip_img_ids = torch.zeros((f_ip, h_ip, w_ip, 3), device=x.device, dtype=x.dtype)
-            ip_img_ids[:, :, :, 0] = -1
-            ip_img_ids[:, :, :, 1] = ip_img_ids[:, :, :, 1] + torch.linspace(h + freq_offset, h + freq_offset + (h_ip - 1), steps=h_ip, device=x.device, dtype=x.dtype).reshape(1, -1, 1)
-            ip_img_ids[:, :, :, 2] = ip_img_ids[:, :, :, 2] + torch.linspace(w + freq_offset, w + freq_offset + (w_ip - 1), steps=w_ip, device=x.device, dtype=x.dtype).reshape(1, 1, -1)
+            ip_img_ids[:, :, :, 0] = ip_img_ids[:, :, :, 0] + torch.linspace(0, f_ip - 1, steps=f_ip, device=x.device, dtype=x.dtype).reshape(-1, 1, 1)
+            ip_img_ids[:, :, :, 1] = ip_img_ids[:, :, :, 1] + torch.linspace(h_len + freq_offset, h_len + freq_offset + h_ip - 1, steps=h_ip, device=x.device, dtype=x.dtype).reshape(1, -1, 1)
+            ip_img_ids[:, :, :, 2] = ip_img_ids[:, :, :, 2] + torch.linspace(w_len + freq_offset, w_len + freq_offset + w_ip - 1, steps=w_ip, device=x.device, dtype=x.dtype).reshape(1, 1, -1)
             ip_img_ids = repeat(ip_img_ids, "t h w c -> b (t h w) c", b=1)
             freqs_ip = self.rope_embedder(ip_img_ids).movedim(1, 2)
 
@@ -2764,8 +2756,8 @@ class WanModel(torch.nn.Module):
             if len(t.shape) == 1:
                 t = t.unsqueeze(1).expand(-1, F) # [B, T]
             self.time_embedding.to(torch.float32)
-            e = e0 = self.time_embedding(t.float().flatten(), dtype=torch.float32)#.reshape(1, F, -1)
-            e = e0 = e0.reshape(1, F, -1)
+            e = e0 = self.time_embedding(t.float().flatten(), dtype=torch.float32).reshape(1, F, -1)
+
 
         if self.audio_model is not None:
             #if t.dim() == 1:
@@ -2900,24 +2892,10 @@ class WanModel(torch.nn.Module):
             latter_middle_frame_audio_emb = latter_frame_audio_emb[:, :, 1:-1, middle_index:middle_index+1, ...] 
             latter_middle_frame_audio_emb = rearrange(latter_middle_frame_audio_emb, "b n_t n w s c -> b n_t (n w) s c") 
             latter_frame_audio_emb_s = torch.concat([latter_first_frame_audio_emb, latter_middle_frame_audio_emb, latter_last_frame_audio_emb], dim=2) 
-            multitalk_audio_embedding = self.multitalk_audio_proj(first_frame_audio_emb_s, latter_frame_audio_emb_s)
-            self.multitalk_audio_proj.to(self.offload_device)
+            multitalk_audio_embedding = self.multitalk_audio_proj(first_frame_audio_emb_s, latter_frame_audio_emb_s) 
             human_num = len(multitalk_audio_embedding)
-
-            # LongCat-Avatar specific
-            if longcat_num_ref_latents > 0:
-                audio_start_ref = multitalk_audio_embedding[:, [0], :, :] # padding
-                multitalk_audio_embedding = torch.cat([audio_start_ref, multitalk_audio_embedding], dim=1).contiguous()
-
-            if longcat_num_cond_latents > 0:
-                multitalk_audio_embedding = multitalk_audio_embedding[:, (-F // self.patch_size[0]):]
-
-            if ref_target_masks is not None:
-                multitalk_audio_embedding = torch.concat(multitalk_audio_embedding.split(1), dim=2).to(self.base_dtype)
-                multitalk_audio_embedding = multitalk_audio_embedding.squeeze(0)
-            else:
-                multitalk_audio_embedding = rearrange(multitalk_audio_embedding, "b t n c -> (b t) n c")
-
+            multitalk_audio_embedding = torch.concat(multitalk_audio_embedding.split(1), dim=2).to(self.base_dtype)
+            self.multitalk_audio_proj.to(self.offload_device)
 
         # convert ref_target_masks to token_ref_target_masks
         token_ref_target_masks = None
@@ -3075,6 +3053,22 @@ class WanModel(torch.nn.Module):
                     dwpose_emb = rearrange(unianim_data['dwpose'], 'b c f h w -> b (f h w) c').contiguous()
                     x.add_(dwpose_emb, alpha=unianim_data['strength'])
 
+            if self.use_alignvid:
+                log.info(f"use alignvid at step {current_step}")
+                alignvid_scheduler = AlignVidScheduler(
+                    num_blocks=self.num_layers,
+                    bgs_mode="first_half",  # or "foreground" if you have a mask
+                    bgs_mask=None,  # optional, for "foreground"
+                    gamma=1.35,  # as used for Wan2.1 in paper [web:20]
+                    t_low=0,  # early-step guidance, Eq. (13) [web:20]
+                    t_high=max(0, total_steps // 2),
+                    total_steps=total_steps,
+                    scale_queries=False,
+                    scale_keys=True,
+                )
+            else:
+                alignvid_scheduler = None
+
             # arguments
             kwargs = dict(
                 e=e0,
@@ -3117,6 +3111,7 @@ class WanModel(torch.nn.Module):
                 e_tr=e0_token_replace if use_token_replace else None,
                 tr_start=token_replace_start,
                 tr_num=replace_token_num,
+                alignvid_scheduler=alignvid_scheduler,
             )
             if self.audio_model is not None:
                 kwargs['e_ovi'] = e0_ovi.to(self.base_dtype)
