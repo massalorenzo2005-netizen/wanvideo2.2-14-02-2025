@@ -301,14 +301,20 @@ class WanVideoSampler:
         has_ref = image_embeds.get("has_ref", False)
 
         #I2V
+        story_mem_latents = image_embeds.get("story_mem_latents", None)
         image_cond = image_embeds.get("image_embeds", None)
         if image_cond is not None:
             if transformer.in_dim == 16:
                 raise ValueError("T2V (text to video) model detected, encoded images only work with I2V (Image to video) models")
             elif transformer.in_dim not in [48, 32]: # fun 2.1 models don't use the mask
                 image_cond_mask = image_embeds.get("mask", None)
-                if image_cond_mask is not None:
-                    image_cond = torch.cat([image_cond_mask, image_cond])
+            # StoryMem
+            if story_mem_latents is not None:
+                image_cond = torch.cat([story_mem_latents.to(image_cond), image_cond], dim=1)
+                image_cond_mask = torch.cat([torch.ones_like(story_mem_latents)[:4], image_cond_mask], dim=1) if image_cond_mask is not None else None
+
+            if image_cond_mask is not None:
+                image_cond = torch.cat([image_cond_mask, image_cond])
             else:
                 image_cond[:, 1:] = 0
 
@@ -336,10 +342,12 @@ class WanVideoSampler:
 
             end_image = image_embeds.get("end_image", None)
             fun_or_fl2v_model = image_embeds.get("fun_or_fl2v_model", False)
-
+            latent_frames = (image_embeds["num_frames"] - 1) // 4
+            latent_frames = latent_frames + (2 if end_image is not None and not fun_or_fl2v_model else 1)
+            latent_frames = latent_frames + story_mem_latents.shape[1] if story_mem_latents is not None else latent_frames
             noise = torch.randn( #C, T, H, W
                 48 if is_5b else 16,
-                (image_embeds["num_frames"] - 1) // 4 + (2 if end_image is not None and not fun_or_fl2v_model else 1),
+                latent_frames,
                 image_embeds["lat_h"],
                 image_embeds["lat_w"],
                 dtype=torch.float32,
@@ -3248,6 +3256,8 @@ class WanVideoSampler:
             latent = latent[:,:-humo_reference_count]
         if longcat_ref_latent is not None:
             latent = latent[:, longcat_ref_latent.shape[1]:]
+        if story_mem_latents is not None:
+            latent = latent[:, story_mem_latents.shape[1]:]
 
         cache_states = None
         if cache_args is not None:
