@@ -1742,7 +1742,7 @@ class WanVideoSampler:
                         base_params['y'] = [image_cond_input] * 2 if image_cond_input is not None else None
                         base_params['clip_fea'] = torch.cat([clip_fea, clip_fea], dim=0)
                         cache_state_uncond = None
-                        [noise_pred_cond, noise_pred_uncond], _, cache_state_cond = transformer(
+                        [noise_pred_cond, noise_pred_uncond_text], _, cache_state_cond = transformer(
                             context=positive_embeds + negative_embeds, is_uncond=False,
                             pred_id=cache_state[0] if cache_state else None,
                             **base_params
@@ -1759,7 +1759,7 @@ class WanVideoSampler:
                 if use_cfg_zero_star:
                     alpha = optimized_scale(
                         noise_pred_cond.view(batch_size, -1),
-                        noise_pred_uncond.view(batch_size, -1)
+                        noise_pred_uncond_text.view(batch_size, -1)
                     ).view(batch_size, 1, 1, 1)
 
                 noise_pred_uncond_text = noise_pred_uncond_text * alpha
@@ -1774,7 +1774,7 @@ class WanVideoSampler:
 
                 #https://github.com/WikiChao/FreSca
                 if use_fresca:
-                    filtered_cond = fourier_filter(noise_pred_cond - noise_pred_uncond, fresca_scale_low, fresca_scale_high, fresca_freq_cutoff)
+                    filtered_cond = fourier_filter(noise_pred_cond - noise_pred_uncond_text, fresca_scale_low, fresca_scale_high, fresca_freq_cutoff)
                     noise_pred = noise_pred_uncond_text + cfg_scale * filtered_cond * alpha
                 else:
                     noise_pred = noise_pred_uncond_text + cfg_scale * (noise_pred_cond - noise_pred_uncond_text)
