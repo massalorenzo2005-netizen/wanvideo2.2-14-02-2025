@@ -1347,7 +1347,7 @@ class WanAttentionBlock(nn.Module):
                                         target_grid_sizes=grid_sizes_ovi, 
                                         target_freqs=freqs_ovi,
                                         g=g,
-                                        scale_keys=self.alignvid_scheduler.scale_keys,
+                                        scale_keys=scale_keys,
                                         energy_low=energy_low,
                                         energy_high=energy_high,
                                         )
@@ -1362,7 +1362,7 @@ class WanAttentionBlock(nn.Module):
                                     rope_func=self.rope_func, inner_t=inner_t, inner_c=inner_c, cross_freqs=cross_freqs,
                                     adapter_proj=adapter_proj, ip_scale=ip_scale, orig_seq_len=original_seq_len, lynx_x_ip=lynx_x_ip, lynx_ip_scale=lynx_ip_scale, longcat_num_cond_latents=longcat_num_cond_latents,
                                     g=g,
-                                    scale_keys=self.alignvid_scheduler.scale_keys,
+                                    scale_keys=scale_keys,
                                     energy_low=energy_low,
                                     energy_high=energy_high,
                                     )
