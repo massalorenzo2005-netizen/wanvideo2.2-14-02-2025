@@ -1861,7 +1861,7 @@ class WanVideoSampler:
                                     if context_reference_latent.shape[0] == 1: #only single extra init latent
                                         new_init_image = context_reference_latent[0, :, 0].to(device)
                                         # Concatenate the first 4 channels of partial_img_emb with new_init_image to match the required shape
-                                        partial_img_emb[:, 0] = torch.cat([image_cond[:4, 0], new_init_image], dim=0)
+                                        partial_img_emb[:, 0] = torch.cat([image_cond[:4, 0].to(device), new_init_image], dim=0)
                                     elif context_reference_latent.shape[0] > 1:
                                         num_extra_inits = context_reference_latent.shape[0]
                                         section_size = (latent_video_length / num_extra_inits)
@@ -1869,7 +1869,7 @@ class WanVideoSampler:
                                         if context_options["verbose"]:
                                             log.info(f"extra init image index: {extra_init_index}")
                                         new_init_image = context_reference_latent[extra_init_index, :, 0].to(device)
-                                        partial_img_emb[:, 0] = torch.cat([image_cond[:4, 0], new_init_image], dim=0)
+                                        partial_img_emb[:, 0] = torch.cat([image_cond[:4, 0].to(device), new_init_image], dim=0)
                                 else:
                                     new_init_image = image_cond[:, 0].to(device)
                                     partial_img_emb[:, 0] = new_init_image
