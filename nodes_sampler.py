@@ -1379,15 +1379,14 @@ class WanVideoSampler:
                     z = z * c_in
                     timestep = c_noise
 
+                self.noise_front_pad_num = 0
                 if image_cond is not None:
                     self.noise_front_pad_num = image_cond_input.shape[1] - z.shape[1]
                     if self.noise_front_pad_num > 0:
                         pad = torch.zeros((z.shape[0], self.noise_front_pad_num, z.shape[2], z.shape[3]), dtype=z.dtype, device=z.device)
-                        z = torch.concat([pad, z], dim=1)
+                        z = torch.cat([pad, z], dim=1)
                         nonlocal seq_len
                         seq_len = math.ceil((z.shape[2] * z.shape[3]) / 4 * z.shape[1])
-                else:
-                    self.noise_front_pad_num = 0
 
                 if background_latents is not None or foreground_latents is not None:
                     z = torch.cat([z, foreground_latents.to(z), background_latents.to(z)], dim=0)
