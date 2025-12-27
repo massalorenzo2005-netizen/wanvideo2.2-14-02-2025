@@ -2777,8 +2777,13 @@ class WanVideoScheduler:
                     handles, labels = ax.get_legend_handles_labels()
                     if labels:
                         ax.legend()
-                if start_idx < end_idx and 0 <= start_idx < len(sigmas_np) and 0 < end_idx < len(sigmas_np):
-                    ax.axvspan(start_idx, end_idx, color='lightblue', alpha=0.1, label='Sampled Range')
+                # Draw shaded range
+                range_start_idx = start_idx if start_idx > 0 else 0
+                range_end_idx = end_idx if end_idx > 0 and end_idx < len(sigmas_np) else len(sigmas_np) - 1
+                if range_start_idx < range_end_idx:
+                    ax.axvspan(range_start_idx, range_end_idx, color='lightblue', alpha=0.1, label='Sampled Range')
+
+
                 plt.tight_layout()
                 plt.savefig(buf, format='png')
                 plt.close(fig)
