@@ -1235,9 +1235,7 @@ class WanVideoModelLoader:
             lynx_ip_layers = "lite"
 
         model_type = "t2v"
-        if "audio_injector.injector.0.k.weight" in sd:
-            model_type = "s2v"
-        elif not "text_embedding.0.weight" in sd:
+        if not "text_embedding.0.weight" in sd:
             model_type = "no_cross_attn" #minimaxremover
         elif "model_type.Wan2_1-FLF2V-14B-720P" in sd or "img_emb.emb_pos" in sd or "flf2v" in model.lower():
             model_type = "fl2v"
@@ -1247,6 +1245,8 @@ class WanVideoModelLoader:
             model_type = "t2v"
         elif "control_adapter.conv.weight" in sd:
             model_type = "t2v"
+        if "audio_injector.injector.0.k.weight" in sd:
+            model_type = "s2v"
 
         out_dim = 16
         if dim == 5120: #14B
