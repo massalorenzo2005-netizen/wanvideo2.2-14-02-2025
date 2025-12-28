@@ -14,7 +14,6 @@ except:
     pass
 
 from .attention import attention
-from .alignvid_asm import compute_energy, sigmoid_rescale, AlignVidScheduler
 import numpy as np
 from tqdm import tqdm
 import gc
@@ -498,7 +497,7 @@ class WanSelfAttention(nn.Module):
         attention_mode = self.attention_mode
         if attention_mode_override is not None:
             attention_mode = attention_mode_override
-        
+
         # Concatenate main and IP keys/values for main attention
         full_k = torch.cat([k, k_ip], dim=1)
         full_v = torch.cat([v, v_ip], dim=1)
@@ -634,8 +633,7 @@ class WanT2VCrossAttention(WanSelfAttention):
     def forward(self, x, context, grid_sizes=None, clip_embed=None, audio_proj=None, audio_scale=1.0,
                 num_latent_frames=21, nag_params={}, nag_context=None, rope_func="comfy",
                 inner_t=None, inner_c=None, cross_freqs=None,
-                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, lynx_x_ip=None, lynx_ip_scale=1.0, longcat_num_cond_latents=None, g=0.0, scale_keys=True,
-                energy_low=1.0, energy_high=2.0, **kwargs):
+                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, lynx_x_ip=None, lynx_ip_scale=1.0, longcat_num_cond_latents=None, **kwargs):
         b, n, d = x.size(0), self.num_heads, self.head_dim
         s = x.size(1)
         # compute query
@@ -663,27 +661,6 @@ class WanT2VCrossAttention(WanSelfAttention):
             if inner_t is not None and cross_freqs is not None:
                 q = rope_apply_z(q, grid_sizes, cross_freqs, inner_t).to(q)
                 k = rope_apply_c(k, cross_freqs, inner_c).to(q)
-
-            if g != 0.0:
-                # Compute energy E and then gamma_e via f(E)
-                # We average over heads to get a scalar.
-                with torch.no_grad():
-                    # Merge batch and heads for simplicity
-                    q_flat = q.reshape(-1, n, d).permute(1, 0, 2)  # n, (b*h), d
-                    k_flat = k.reshape(-1, n, d).permute(1, 0, 2)  # n, (b*h), d
-                    E = compute_energy(q_flat, k_flat)  # scalar
-                    gamma_e = sigmoid_rescale(E, low=energy_low, high=energy_high)  # f(·) in Eq. (10)
-
-                # Combine energy-based gamma_e with scheduled gain.
-                # Effective factor: 1 + g, then multiply by gamma_e.
-                # This is a simple, practical realization of Algorithm 2.
-                gamma_eff = (1.0 + g) * gamma_e.item()
-                log.info(f"Effective attention scaling factor: {gamma_eff:.4f}")
-                if scale_keys:
-                    k = k * gamma_eff
-                else:
-                    q = q * gamma_eff
-
 
             x = attention(q, k, v, attention_mode=self.attention_mode, heads=self.num_heads).flatten(2)
 
@@ -751,8 +728,7 @@ class WanI2VCrossAttention(WanSelfAttention):
 
     def forward(self, x, context, grid_sizes=None, clip_embed=None, audio_proj=None,
                 audio_scale=1.0, num_latent_frames=21, nag_params={}, nag_context=None, rope_func="comfy",
-                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, g=0.0, scale_keys=True,
-                energy_low=1.0, energy_high=2.0, **kwargs):
+                adapter_proj=None, adapter_attn_mask=None, ip_scale=1.0, orig_seq_len=None, **kwargs):
         r"""
         Args:
             x(Tensor): Shape [B, L1, C]
@@ -915,7 +891,6 @@ class WanAttentionBlock(nn.Module):
         self.has_face_fuser_block = face_fuser_block
         self.ref_attn_k_img = None
         self.ref_attn_v_img = None
-        self.alignvid_scheduler = None
 
         # layers
         self.norm1 = WanLayerNorm(self.dim, eps)
@@ -1030,7 +1005,8 @@ class WanAttentionBlock(nn.Module):
         x_ovi=None, e_ovi=None, freqs_ovi=None, context_ovi=None, seq_lens_ovi=None, grid_sizes_ovi=None,
         longcat_num_cond_latents=0, longcat_avatar_options=None, #longcat image cond amount
         x_onetoall_ref=None, onetoall_freqs=None, onetoall_ref=None, onetoall_ref_scale=1.0, #one-to-all
-        e_tr=None, tr_num=0, tr_start=0,#token replacement
+        e_tr=None, tr_num=0, tr_start=0, #token replacement
+        attention_mode_override=None,
     ):
         r"""
         Args:
@@ -1175,6 +1151,10 @@ class WanAttentionBlock(nn.Module):
         if enhance_enabled:
             feta_scores = get_feta_scores(q, k)
 
+        if self.attention_mode == "sageattn_3" and attention_mode_override is None:
+            if current_step != 0 and not last_step:
+                attention_mode_override = "sageattn"
+
         #self-attention
         split_attn = (context is not None
                       and (context.shape[0] > 1 or (clip_embed is not None and clip_embed.shape[0] > 1))
@@ -1186,19 +1166,14 @@ class WanAttentionBlock(nn.Module):
             y = self.self_attn.forward_split(q, k, v, seq_lens, grid_sizes, seq_chunks)
         elif ref_target_masks is not None: #multi/infinite talk
             y, x_ref_attn_map = self.self_attn.forward_multitalk(q, k, v, seq_lens, grid_sizes, ref_target_masks)
-        elif self.attention_mode == "radial_sage_attention":
+        elif self.attention_mode == "radial_sage_attention" or attention_mode_override is not None and attention_mode_override == "radial_sage_attention":
             if self.dense_block or self.dense_timesteps is not None and current_step < self.dense_timesteps:
                 if self.dense_attention_mode == "sparse_sage_attn":
                     y = self.self_attn.forward_radial(q, k, v, dense_step=True)
                 else:
-                    y = self.self_attn.forward(q, k, v, seq_lens)
+                    y = self.self_attn.forward(q, k, v, seq_lens, attention_mode_override=attention_mode_override)
             else:
                 y = self.self_attn.forward_radial(q, k, v, dense_step=False)
-        elif self.attention_mode == "sageattn_3":
-            if current_step != 0 and not last_step:
-                y = self.self_attn.forward(q, k, v, seq_lens, attention_mode_override="sageattn_3")
-            else:
-                y = self.self_attn.forward(q, k, v, seq_lens, attention_mode_override="sageattn")
         elif x_ip is not None and self.kv_cache is None: #stand-in
             # First pass: cache IP keys/values and compute attention
             self.kv_cache = {"k_ip": k_ip.detach(), "v_ip": v_ip.detach()}
@@ -1209,18 +1184,18 @@ class WanAttentionBlock(nn.Module):
             v_ip = self.kv_cache["v_ip"]
             full_k = torch.cat([k, k_ip], dim=1)
             full_v = torch.cat([v, v_ip], dim=1)
-            y = self.self_attn.forward(q, full_k, full_v, seq_lens)
+            y = self.self_attn.forward(q, full_k, full_v, seq_lens, attention_mode_override=attention_mode_override)
         elif is_longcat and longcat_num_cond_latents > 0:
             if longcat_num_cond_latents == 1:
                 num_cond_latents_thw = longcat_num_cond_latents * (N // num_latent_frames)
                 # process the noise tokens
-                x_noise = self.self_attn.forward(q[:, num_cond_latents_thw:].contiguous(), k, v, seq_lens)
+                x_noise = self.self_attn.forward(q[:, num_cond_latents_thw:].contiguous(), k, v, seq_lens, attention_mode_override=attention_mode_override)
                 # process the condition tokens
                 x_cond = self.self_attn.forward(
                     q[:, :num_cond_latents_thw].contiguous(),
                     k[:, :num_cond_latents_thw].contiguous(),
                     v[:, :num_cond_latents_thw].contiguous(),
-                    seq_lens)
+                    seq_lens, attention_mode_override=attention_mode_override)
                 # merge x_cond and x_noise
                 y = torch.cat([x_cond, x_noise], dim=1).contiguous()
             elif longcat_num_cond_latents > 1: # video continuation
@@ -1262,13 +1237,14 @@ class WanAttentionBlock(nn.Module):
                 q_cond = q[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
                 k_cond = k[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
                 v_cond = v[:, num_ref_latents_thw:num_cond_latents_thw].contiguous()
-                x_ref = self.self_attn.forward(q_ref, k_ref, v_ref, seq_lens)
-                x_cond = self.self_attn.forward(q_cond, k_cond, v_cond, seq_lens)
+                x_ref = self.self_attn.forward(q_ref, k_ref, v_ref, seq_lens, attention_mode_override=attention_mode_override)
+                x_cond = self.self_attn.forward(q_cond, k_cond, v_cond, seq_lens, attention_mode_override=attention_mode_override)
 
                 # merge x_cond and x_noise
                 y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
         else:
-            y = self.self_attn.forward(q, k, v, seq_lens, lynx_ref_feature=lynx_ref_feature, lynx_ref_scale=lynx_ref_scale, onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale)
+            y = self.self_attn.forward(q, k, v, seq_lens, lynx_ref_feature=lynx_ref_feature, lynx_ref_scale=lynx_ref_scale,
+                                       onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale, attention_mode_override=attention_mode_override)
 
         del q, k, v
 
@@ -1309,24 +1285,6 @@ class WanAttentionBlock(nn.Module):
 
         # cross-attention & ffn function
         if context is not None:
-            # ==============================
-            # AlignVid ASM with BGS + SGS   [web:20]
-            # ==============================
-            g = 0
-            scale_keys = True
-            energy_low = 1.0
-            energy_high = 2.0
-            if self.alignvid_scheduler is not None:
-                # g^(l,t) as in Eq. (14) [web:20]
-                g = self.alignvid_scheduler.get_scale(
-                    l=self.block_idx,
-                    t=current_step.item(),
-                )
-                log.info(f"g(scale) at block {self.block_idx}, step {current_step.item()}: {g}")
-                scale_keys = self.alignvid_scheduler.scale_keys
-                energy_low = self.alignvid_scheduler.energy_low
-                energy_high = self.alignvid_scheduler.energy_high
-
             if x_ovi is not None:
                 #audio
                 og_ovi_x = x_ovi
@@ -1345,12 +1303,7 @@ class WanAttentionBlock(nn.Module):
                                         target_seq=og_ovi_x, 
                                         target_seq_lens=seq_lens_ovi, 
                                         target_grid_sizes=grid_sizes_ovi, 
-                                        target_freqs=freqs_ovi,
-                                        g=g,
-                                        scale_keys=scale_keys,
-                                        energy_low=energy_low,
-                                        energy_high=energy_high,
-                                        )
+                                        target_freqs=freqs_ovi)
             elif split_attn:
                 if nag_context is not None:
                     raise NotImplementedError("nag_context is not supported in split_cross_attn_ffn")
@@ -1360,12 +1313,7 @@ class WanAttentionBlock(nn.Module):
                 x = x + self.cross_attn(self.norm3(x.to(self.norm3.weight.dtype)).to(input_dtype), context, grid_sizes, clip_embed=clip_embed, audio_proj=audio_proj, audio_scale=audio_scale,
                                     num_latent_frames=num_latent_frames, nag_params=nag_params, nag_context=nag_context,
                                     rope_func=self.rope_func, inner_t=inner_t, inner_c=inner_c, cross_freqs=cross_freqs,
-                                    adapter_proj=adapter_proj, ip_scale=ip_scale, orig_seq_len=original_seq_len, lynx_x_ip=lynx_x_ip, lynx_ip_scale=lynx_ip_scale, longcat_num_cond_latents=longcat_num_cond_latents,
-                                    g=g,
-                                    scale_keys=scale_keys,
-                                    energy_low=energy_low,
-                                    energy_high=energy_high,
-                                    )
+                                    adapter_proj=adapter_proj, ip_scale=ip_scale, orig_seq_len=original_seq_len, lynx_x_ip=lynx_x_ip, lynx_ip_scale=lynx_ip_scale, longcat_num_cond_latents=longcat_num_cond_latents)
                 x = x.to(input_dtype)
                 # MultiTalk
                 if multitalk_audio_embedding is not None and not isinstance(self, VaceWanAttentionBlock):
@@ -1903,8 +1851,6 @@ class WanModel(torch.nn.Module):
 
         self.is_longcat = is_longcat
 
-        self.use_alignvid = True
-
         # embeddings
         if not self.is_ovi_audio_model:
             self.patch_embedding = nn.Conv3d(in_dim, dim, kernel_size=patch_size, stride=patch_size)
@@ -2335,6 +2281,7 @@ class WanModel(torch.nn.Module):
         self, x, t, context, seq_len,
         is_uncond=False,
         current_step_percentage=0.0, current_step=0, last_step=0, total_steps=50,
+        attention_mode_override=None,
         clip_fea=None, y=None,
         device=torch.device('cuda'),
         freqs=None,
@@ -3180,8 +3127,21 @@ class WanModel(torch.nn.Module):
             if lynx_ref_buffer is None and lynx_ref_feature_extractor:
                 lynx_ref_buffer = {}
 
+            attn_override_blocks = attention_mode = None
+            attention_mode_override_active = False
+            if attention_mode_override is not None:
+                attn_override_blocks = attention_mode_override.get("blocks", range(len(self.blocks)))
+                if attention_mode_override["start_step"] <= current_step < attention_mode_override["end_step"]:
+                    attention_mode_override_active = True
+                    if attention_mode_override["verbose"]:
+                        tqdm.write(f"Applying attention mode override: {attention_mode_override['mode']} at step {current_step} on blocks: {attn_override_blocks if attn_override_blocks is not None else 'all'}")
+
             for b, block in enumerate(self.blocks):
                 mm.throw_exception_if_processing_interrupted()
+                if attention_mode_override_active and b in attn_override_blocks:
+                    attention_mode = attention_mode_override['mode']
+                else:
+                    attention_mode = None
                 block_idx = f"{b:02d}"
                 if lynx_ref_buffer is not None and not lynx_ref_feature_extractor:
                     lynx_ref_feature = lynx_ref_buffer.get(block_idx, None)
@@ -3225,7 +3185,7 @@ class WanModel(torch.nn.Module):
                     x_onetoall_ref = onetoall_ref_block_samples[b // interval_ref]
 
                 # ---run block----#
-                x, x_ip, lynx_ref_feature, x_ovi = block(x, x_ip=x_ip, lynx_ref_feature=lynx_ref_feature, x_ovi=x_ovi, x_onetoall_ref=x_onetoall_ref, onetoall_freqs=onetoall_freqs, **kwargs)
+                x, x_ip, lynx_ref_feature, x_ovi = block(x, x_ip=x_ip, lynx_ref_feature=lynx_ref_feature, x_ovi=x_ovi, x_onetoall_ref=x_onetoall_ref, onetoall_freqs=onetoall_freqs, attention_mode_override=attention_mode, **kwargs)
                 # ---post block----#
 
                 if self.audio_injector is not None and s2v_audio_input is not None:

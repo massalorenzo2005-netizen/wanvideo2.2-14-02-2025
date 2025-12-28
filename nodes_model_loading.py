@@ -36,6 +36,9 @@ try:
 except:
     PromptServer = None
 
+attention_modes = ["sdpa", "flash_attn_2", "flash_attn_3", "sageattn", "sageattn_3", "radial_sage_attention", "sageattn_compiled",
+                    "sageattn_ultravico", "comfy"]
+
 #from city96's gguf nodes
 def update_folder_names_and_paths(key, targets=[]):
     # check for existing key
@@ -1006,6 +1009,43 @@ def add_lora_weights(patcher, lora, base_dtype, merge_loras=False):
         del lora_sd
     return patcher, control_lora, unianimate_sd
 
+class WanVideoSetAttentionModeOverride:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("WANVIDEOMODEL", ),
+                "attention_mode": (attention_modes, {"default": "sdpa"}),
+                "start_step": ("INT", {"default": 1, "min": 1, "max": 10000, "step": 1, "tooltip": "Step to start applying the attention mode override"}),
+                "end_step": ("INT", {"default": 10000, "min": 1, "max": 10000, "step": 1, "tooltip": "Step to end applying the attention mode override"}),
+                "verbose": ("BOOLEAN", {"default": False, "tooltip": "Print verbose info about attention mode override during generation"}),
+            },
+            "optional": {
+                "blocks":("INT", {"forceInput": True} ),
+            }
+        }
+
+    RETURN_TYPES = ("WANVIDEOMODEL",)
+    RETURN_NAMES = ("model", )
+    FUNCTION = "getmodelpath"
+    CATEGORY = "WanVideoWrapper"
+    DESCRIPTION = "Override the attention mode for the model for specific step and/or block range"
+
+    def getmodelpath(self, model, attention_mode, start_step, end_step, verbose, blocks=None):
+        model_clone = model.clone()
+        attention_mode_override = {
+            "mode": attention_mode,
+            "start_step": start_step,
+            "end_step": end_step,
+            "verbose": verbose,
+        }
+        if blocks is not None:
+            attention_mode_override["blocks"] = blocks
+        model_clone.model_options['transformer_options']["attention_mode_override"] = attention_mode_override
+
+        return (model_clone,)
+
+
 #region Model loading
 class WanVideoModelLoader:
     @classmethod
@@ -1020,17 +1060,7 @@ class WanVideoModelLoader:
             "load_device": (["main_device", "offload_device"], {"default": "offload_device", "tooltip": "Initial device to load the model to, NOT recommended with the larger models unless you have 48GB+ VRAM"}),
             },
             "optional": {
-                "attention_mode": ([
-                    "sdpa",
-                    "flash_attn_2",
-                    "flash_attn_3",
-                    "sageattn",
-                    "sageattn_3",
-                    "radial_sage_attention",
-                    "sageattn_compiled",
-                    "sageattn_ultravico",
-                    "comfy"
-                    ], {"default": "sdpa"}),
+                "attention_mode": (attention_modes, {"default": "sdpa"}),
                 "compile_args": ("WANCOMPILEARGS", ),
                 "block_swap_args": ("BLOCKSWAPARGS", ),
                 "lora": ("WANVIDLORA", {"default": None}),
@@ -2043,6 +2073,7 @@ NODE_CLASS_MAPPINGS = {
     "WanVideoTorchCompileSettings": WanVideoTorchCompileSettings,
     "LoadWanVideoT5TextEncoder": LoadWanVideoT5TextEncoder,
     "LoadWanVideoClipTextEncoder": LoadWanVideoClipTextEncoder,
+    "WanVideoSetAttentionModeOverride": WanVideoSetAttentionModeOverride,
     }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -2061,4 +2092,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "WanVideoTorchCompileSettings": "WanVideo Torch Compile Settings",
     "LoadWanVideoT5TextEncoder": "WanVideo T5 Text Encoder Loader",
     "LoadWanVideoClipTextEncoder": "WanVideo CLIP Text Encoder Loader",
+    "WanVideoSetAttentionModeOverride": "WanVideo Set Attention Mode Override",
     }

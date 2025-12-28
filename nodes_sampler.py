@@ -1414,6 +1414,7 @@ class WanVideoSampler:
                     'is_uncond': False, # is unconditional
                     'current_step': idx, # current step
                     'current_step_percentage': current_step_percentage, # current step percentage
+                    'attention_mode_override': transformer_options.get("attention_mode_override", None),
                     'last_step': len(timesteps) - 1 == idx, # is last step
                     'control_lora_enabled': control_lora_enabled, # control lora toggle for patch embed selection
                     'enhance_enabled': enhance_enabled, # enhance-a-video toggle
