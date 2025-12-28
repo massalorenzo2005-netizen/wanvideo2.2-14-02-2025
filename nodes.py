@@ -919,7 +919,7 @@ class WanVideoSVIProEmbeds:
                 },
                 "optional": {
                     "prev_samples": ("LATENT", {"tooltip": "Last latent from previous generation"}),
-                    "motion_latent_count": ("INT", {"default": 2, "min": 1, "max": 100, "step": 1, "tooltip": "Number of latents used to continue"}),
+                    "motion_latent_count": ("INT", {"default": 1, "min": 0, "max": 100, "step": 1, "tooltip": "Number of latents used to continue"}),
                 }
         }
 
@@ -957,8 +957,6 @@ class WanVideoSVIProEmbeds:
 
         image_embeds = {
             "image_embeds": y,
-
-            #"max_seq_len": max_seq_len,
             "num_frames": num_frames,
             "lat_h": H,
             "lat_w": W,
