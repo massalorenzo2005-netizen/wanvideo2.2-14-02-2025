@@ -467,7 +467,7 @@ class WanSelfAttention(nn.Module):
         v = (self.v(x) + self.v_loras(x)).view(b, s, n, d)
         return q, k, v
 
-    def forward(self, q, k, v, seq_lens, lynx_ref_feature=None, lynx_ref_scale=1.0, attention_mode_override=None, onetoall_ref=None, onetoall_ref_scale=1.0):
+    def forward(self, q, k, v, seq_lens, lynx_ref_feature=None, lynx_ref_scale=1.0, attention_mode_override=None, onetoall_ref=None, onetoall_ref_scale=1.0, frame_tokens=1536):
         r"""
         Args:
             x(Tensor): Shape [B, L, num_heads, C / num_heads]
@@ -477,12 +477,13 @@ class WanSelfAttention(nn.Module):
         """
         attention_mode = self.attention_mode
         if attention_mode_override is not None:
+            print("Overriding attention mode to:", attention_mode_override)
             attention_mode = attention_mode_override
 
         if self.ref_adapter is not None and lynx_ref_feature is not None:
             ref_x = self.ref_adapter(self, q, lynx_ref_feature)
 
-        x = attention(q, k, v, k_lens=seq_lens, attention_mode=attention_mode, heads=self.num_heads)
+        x = attention(q, k, v, k_lens=seq_lens, attention_mode=attention_mode, heads=self.num_heads, frame_tokens=frame_tokens)
 
         if self.ref_adapter is not None and lynx_ref_feature is not None:
             x = x.add(ref_x, alpha=lynx_ref_scale)
@@ -1006,7 +1007,7 @@ class WanAttentionBlock(nn.Module):
         longcat_num_cond_latents=0, longcat_avatar_options=None, #longcat image cond amount
         x_onetoall_ref=None, onetoall_freqs=None, onetoall_ref=None, onetoall_ref_scale=1.0, #one-to-all
         e_tr=None, tr_num=0, tr_start=0, #token replacement
-        attention_mode_override=None,
+        attention_mode_override=None, frame_tokens=None,
     ):
         r"""
         Args:
@@ -1244,7 +1245,7 @@ class WanAttentionBlock(nn.Module):
                 y = torch.cat([x_ref, x_cond, x_noise], dim=1).contiguous()
         else:
             y = self.self_attn.forward(q, k, v, seq_lens, lynx_ref_feature=lynx_ref_feature, lynx_ref_scale=lynx_ref_scale,
-                                       onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale, attention_mode_override=attention_mode_override)
+                                       onetoall_ref=onetoall_ref, onetoall_ref_scale=onetoall_ref_scale, attention_mode_override=attention_mode_override, frame_tokens=frame_tokens)
 
         del q, k, v
 
@@ -3041,6 +3042,7 @@ class WanModel(torch.nn.Module):
                 camera_embed=camera_embed,
                 audio_proj=audio_proj,
                 num_latent_frames = F,
+                frame_tokens=x.shape[1] // F,
                 original_seq_len=self.original_seq_len,
                 enhance_enabled=enhance_enabled,
                 audio_scale=audio_scale,
