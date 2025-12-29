@@ -1016,7 +1016,7 @@ class WanVideoSetAttentionModeOverride:
             "required": {
                 "model": ("WANVIDEOMODEL", ),
                 "attention_mode": (attention_modes, {"default": "sdpa"}),
-                "start_step": ("INT", {"default": 1, "min": 1, "max": 10000, "step": 1, "tooltip": "Step to start applying the attention mode override"}),
+                "start_step": ("INT", {"default": 0, "min": 0, "max": 10000, "step": 1, "tooltip": "Step to start applying the attention mode override"}),
                 "end_step": ("INT", {"default": 10000, "min": 1, "max": 10000, "step": 1, "tooltip": "Step to end applying the attention mode override"}),
                 "verbose": ("BOOLEAN", {"default": False, "tooltip": "Print verbose info about attention mode override during generation"}),
             },
