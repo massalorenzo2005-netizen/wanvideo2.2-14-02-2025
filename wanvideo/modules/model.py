@@ -2553,13 +2553,9 @@ class WanModel(torch.nn.Module):
             prev_latent = dual_control_input.get("prev_latent", None)
             if prev_latent is not None:
                 F += prev_latent.shape[2]
-                print("Using Dual ControlNet prev latent shape:", prev_latent.shape)
                 prev_x = [self.original_patch_embedding(u.unsqueeze(0).to(torch.float32)).to(x[0].dtype) for u in prev_latent]
                 prev_x = [u.flatten(2).transpose(1, 2).to(self.base_dtype) for u in prev_x]
-                print("Dual ControlNet prev_x shape:", prev_x[0].shape)
-                print("x shape before concat:", x[0].shape)
                 seq_len += prev_x[0].shape[1]
-                print("F updated to:", F)
                 x = [torch.cat([u, v], dim=1) for u, v in zip(prev_x, x)]
 
         # SCAIL pose
