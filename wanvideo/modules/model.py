@@ -2343,7 +2343,6 @@ class WanModel(torch.nn.Module):
             List[Tensor]:
                 List of denoised video tensors with original input shapes [C_out, F, H / 8, W / 8]
         """
-        print("input x shape:", x[0].shape)
         # Stand-In only used on first positive pass, then cached in kv_cache
         if is_uncond or current_step > 0:
             standin_input = None
