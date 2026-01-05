@@ -3178,7 +3178,6 @@ class WanModel(torch.nn.Module):
                 e_tr=e0_token_replace if use_token_replace else None,
                 tr_start=token_replace_start,
                 tr_num=replace_token_num,
-                alignvid_scheduler=alignvid_scheduler,
                 transformer_options=transformer_options
             )
             if self.audio_model is not None:
