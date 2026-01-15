@@ -96,7 +96,7 @@ class WanVideoSampler:
         vae = image_embeds.get("vae", None)
         tiled_vae = image_embeds.get("tiled_vae", False)
 
-        transformer_options = patcher.model_options.get("transformer_options", None)
+        transformer_options = copy.deepcopy(patcher.model_options.get("transformer_options", None))
         merge_loras = transformer_options["merge_loras"]
 
         block_swap_args = transformer_options.get("block_swap_args", None)
@@ -177,7 +177,6 @@ class WanVideoSampler:
             start_step = scheduler.get("start_step", start_step)
         elif scheduler != "multitalk":
             sample_scheduler, timesteps,_,_ = get_scheduler(scheduler, steps, start_step, end_step, shift, device, transformer.dim, denoise_strength, sigmas=sigmas, log_timesteps=True)
-            log.info(f"sigmas: {sample_scheduler.sigmas}")
         else:
             timesteps = torch.tensor([1000, 750, 500, 250], device=device)
 
@@ -240,8 +239,6 @@ class WanVideoSampler:
                 image_cond = torch.cat([image_cond_mask, image_cond])
             else:
                 image_cond[:, 1:] = 0
-
-            log.info(f"image_cond shape: {image_cond.shape}")
 
             #ATI tracks
             if transformer_options is not None:
@@ -1151,6 +1148,18 @@ class WanVideoSampler:
                 if context_options is None:
                     image_cond = replace_feature(image_cond.unsqueeze(0).clone(), track_pos.unsqueeze(0), wanmove_embeds.get("strength", 1.0))[0]
 
+        # LongVie2 dual control
+        dual_control_embeds = image_embeds.get("dual_control", None)
+        if dual_control_embeds is not None and context_options is None:
+            dual_control_input = dict_to_device(dual_control_embeds.copy(), device, dtype) if dual_control_embeds is not None else None
+            prev_latents = dual_control_input.get("prev_latent", None)
+            if prev_latents is not None:
+                _sigma = dual_control_embeds.get("first_frame_noise_level", 0.925926)
+                log.info(f"Using dual control previous latents with first frame noise level: {_sigma}")
+                latent[:, :1] = (1 - _sigma) * prev_latents[:, -1:].to(latent) + _sigma * noise[:, :1]
+                prev_ones = torch.ones(20, *prev_latents.shape[1:], device=device, dtype=dtype)
+                dual_control_input["prev_latent"] = torch.cat([prev_ones, prev_latents]).unsqueeze(0)
+
         #region model pred
         def predict_with_cfg(z, cfg_scale, positive_embeds, negative_embeds, timestep, idx, image_cond=None, clip_fea=None,
                              control_latents=None, vace_data=None, unianim_data=None, audio_proj=None, control_camera_latents=None,
@@ -1403,6 +1412,19 @@ class WanVideoSampler:
                 if wanmove_embeds is not None and context_window is not None:
                     image_cond_input = replace_feature(image_cond_input.unsqueeze(0), track_pos[:, context_window].unsqueeze(0), wanmove_embeds.get("strength", 1.0))[0]
 
+                dual_control_in = None
+                if dual_control_embeds is not None:
+                    if context_window is not None:
+                        dual_control_in = dual_control_embeds.copy()
+                        dense_input_latent = dual_control_embeds.get("dense_input_latent", None)
+                        if dense_input_latent is not None:
+                            dual_control_in["dense_input_latent"] = dual_control_embeds["dense_input_latent"][:, :, context_window]
+                        sparse_input_latent = dual_control_embeds.get("sparse_input_latent", None)
+                        if sparse_input_latent is not None:
+                            dual_control_in["sparse_input_latent"] = dual_control_embeds["sparse_input_latent"][:, :, context_window]
+                    else:
+                        dual_control_in = dual_control_input
+
                 base_params = {
                     'x': [z], # latent
                     'y': [image_cond_input] if image_cond_input is not None else None, # image cond
@@ -1465,6 +1487,8 @@ class WanVideoSampler:
                     "one_to_all_input": one_to_all_data, # One-to-All input
                     "one_to_all_controlnet_strength": one_to_all_data["controlnet_strength"] if one_to_all_data is not None else 0.0,
                     "scail_input": scail_data_in, # SCAIL input
+                    "dual_control_input": dual_control_in, # LongVie2 dual control input
+                    "transformer_options": transformer_options
                 }
 
                 batch_size = 1
@@ -1678,8 +1702,8 @@ class WanVideoSampler:
         callback = prepare_callback(patcher, len(timesteps))
 
         if not multitalk_sampling and not framepack and not wananimate_loop:
-            log.info(f"Input sequence length: {seq_len}")
-            log.info(f"Sampling {(latent_video_length-1) * 4 + 1} frames at {latent.shape[3]*vae_upscale_factor}x{latent.shape[2]*vae_upscale_factor} with {steps-ttm_start_step} steps")
+            log.info("-" * 10 + " Sampling start " + "-" * 10)
+            log.info(f"{(latent_video_length-1) * 4 + 1} frames at {latent.shape[3]*vae_upscale_factor}x{latent.shape[2]*vae_upscale_factor} (Input sequence length: {seq_len}) with {steps-ttm_start_step} steps")
 
 
         # Differential diffusion prep
@@ -2578,6 +2602,8 @@ class WanVideoSampler:
             latent = latent[:, longcat_ref_latent.shape[1]:]
         if story_mem_latents is not None:
             latent = latent[:, story_mem_latents.shape[1]:]
+
+        log.info("-" * 10 + " Sampling end " + "-" * 12)
 
         cache_states = None
         if cache_args is not None:
