@@ -151,9 +151,9 @@
 ## 3. 具体重构 Checklist（可按步骤逐项验证）
 
 ### A. 新增 shot_utils 基础能力
-- [ ] 添加 `wanvideo/modules/shot_utils.py`（保持 main 内容）
-- [ ] `__init__.py` 中做 `sys.modules.setdefault` 兼容映射
-- [ ] `parse_structured_prompt()` 可处理 fast/slow tokenizer offsets
+- [x] 添加 `wanvideo/modules/shot_utils.py`（保持 main 内容）
+- [x] `__init__.py` 中做 `sys.modules.setdefault` 兼容映射
+- [x] `parse_structured_prompt()` 可处理 fast/slow tokenizer offsets
 
 **Diff 指向**：
 - `git diff 393fe78..main -- wanvideo/modules/shot_utils.py`
@@ -162,11 +162,13 @@
 ---
 
 ### B. 节点：Holocine Shot / Prompt / SetShotAttention
-- [ ] `WanVideoHolocineShotArgs` 添加并保持 I/O 一致
-- [ ] `WanVideoHolocineShotBuilder` 支持 shot_list 链式构建 + LoRA + smooth_window
-- [ ] `WanVideoHolocinePromptEncode`：结构化 prompt + holocine_args 输出
-- [ ] `WanVideoHolocineSetShotAttention`：写入 shot_attention config
-- [ ] NODE 映射、显示名、CATEGORY 完全对齐
+- [x] `WanVideoHolocineShotArgs` 添加并保持 I/O 一致
+- [x] `WanVideoHolocineShotBuilder` 支持 shot_list 链式构建 + LoRA + smooth_window
+- [x] `WanVideoHolocinePromptEncode`：结构化 prompt + holocine_args 输出
+- [x] `WanVideoHolocineSetShotAttention`：写入 shot_attention config
+- [x] NODE 映射、显示名、CATEGORY 完全对齐
+- [x] prompt 标签格式与 main 一致（`[global caption]`, `[per shot caption]`, `[shot cut]`）
+- [x] `text_cut_positions` 写入 `text_embeds` 字典
 
 **Diff 指向**：
 - `git diff 393fe78..main -- nodes.py`
@@ -209,8 +211,8 @@
 ---
 
 ### F. Tokenizer 兼容与日志
-- [ ] `tokenizers.py` fast 失败 fallback slow
-- [ ] `t5.py` 日志风格与 upstream 一致
+- [x] `tokenizers.py` fast 失败 fallback slow
+- [x] `t5.py` 日志风格与 upstream 一致
 
 **Diff 指向**：
 - `git diff 393fe78..main -- wanvideo/modules/tokenizers.py`
@@ -249,3 +251,6 @@
 
 ## 7. 实施记录
 - 2026-01-21 Commit 1：新增 `docs/multishot_refactor_plan.md`，删除旧文档 `docs/reimplement_main_since_upstream.md`（文档基线确立）。**Checklist 更新：** `Z. 文档与流程` 完成。
+- 2026-01-21 Commit 2：新增 `wanvideo/modules/shot_utils.py` 并在 `__init__.py` 建立 `wanvideo.modules.shot_utils` 映射。**Checklist 更新：** `A. 新增 shot_utils 基础能力` 完成。
+- 2026-01-21 Commit 3：`tokenizers.py` 增加 fast->slow fallback，`t5.py` 统一日志输出。**Checklist 更新：** `F. Tokenizer 兼容与日志` 完成。
+- 2026-01-21 Commit 4：新增 Holocine 节点与结构化 prompt 流程，`WanVideoTextEncode` 输出 `text_cut_positions`。**Checklist 更新：** `B. 节点：Holocine Shot / Prompt / SetShotAttention` 完成。
