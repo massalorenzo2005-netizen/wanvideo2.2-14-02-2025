@@ -10,7 +10,8 @@ from .wanvideo.schedulers import get_scheduler, scheduler_list
 from .gguf.gguf import set_lora_params_gguf
 from .multitalk.multitalk import add_noise
 from .utils import(log, print_memory, apply_lora, fourier_filter, optimized_scale, setup_radial_attention,
-                   compile_model, dict_to_device, tangential_projection, get_raag_guidance, temporal_score_rescaling, offload_transformer, init_blockswap)
+                   compile_model, dict_to_device, tangential_projection, get_raag_guidance, temporal_score_rescaling,
+                   offload_transformer, hard_offload_transformer, init_blockswap)
 from .multitalk.multitalk_loop import multitalk_loop
 from .cache_methods.cache_methods import cache_report
 from .nodes_model_loading import load_weights, standardize_lora_key_format, filter_state_dict_by_blocks, model_lora_keys_unet
@@ -278,7 +279,6 @@ class WanVideoSampler:
             shot_lora_payload = prepare_shot_lora_payload(patcher.model, shot_lora_specs)
             if all(len(entry) == 0 for entry in shot_lora_payload):
                 shot_lora_payload = []
-        assign_shot_lora_to_transformer(transformer, shot_lora_payload)
 
         block_swap_args = transformer_options.get("block_swap_args", None)
         if block_swap_args is not None:
@@ -318,6 +318,8 @@ class WanVideoSampler:
             set_lora_params(transformer, patcher.patches)
         else:
             remove_lora_from_module(transformer) #clear possible unmerged lora weights
+
+        assign_shot_lora_to_transformer(transformer, shot_lora_payload)
 
         transformer.lora_scheduling_enabled = transformer_options.get("lora_scheduling_enabled", False)
 
@@ -2829,9 +2831,10 @@ class WanVideoSampler:
 
             except Exception as e:
                 log.error(f"Error during sampling: {e}")
-                if force_offload:
-                    if not model["auto_cpu_offload"]:
-                        offload_transformer(transformer)
+                # Always clear per-shot LoRA buffers to avoid VRAM residue on failures.
+                assign_shot_lora_to_transformer(transformer, [])
+                if force_offload and (not model["auto_cpu_offload"] or shot_lora_payload):
+                    hard_offload_transformer(transformer)
                 raise e
 
         if phantom_latents is not None:
@@ -2856,9 +2859,10 @@ class WanVideoSampler:
                     "magcache_state": transformer.magcache_state,
                 }
 
-        if force_offload:
-            if not model["auto_cpu_offload"]:
-                offload_transformer(transformer)
+        # Always clear per-shot LoRA buffers to avoid VRAM residue.
+        assign_shot_lora_to_transformer(transformer, [])
+        if force_offload and (not model["auto_cpu_offload"] or shot_lora_payload):
+            hard_offload_transformer(transformer)
 
         try:
             print_memory(device)
