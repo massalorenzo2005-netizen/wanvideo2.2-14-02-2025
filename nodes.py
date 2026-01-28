@@ -204,17 +204,17 @@ class WanVideoHolocineShotBuilder:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "shot_caption": ("STRING", {"default": "", "multiline": True, "tooltip": "镜头描述，会按添加顺序拼接。"}),
+                "shot_caption": ("STRING", {"default": "", "multiline": True, "tooltip": "Shot description; concatenated in the order added."}),
             },
             "optional": {
                 "shot_list": ("WANVID_HOLOCINE_SHOT_LIST",),
-                "shot_lora": ("WANVIDLORA", {"default": None, "tooltip": "可选：为当前镜头附加的 LoRA 列表，会在采样时按镜头聚合。"}),
+                "shot_lora": ("WANVIDLORA", {"default": None, "tooltip": "Optional: LoRA list for this shot; aggregated per shot at sampling time."}),
                 "smooth_window": ("INT", {
                     "default": 0,
                     "min": 0,
                     "max": 64,
                     "step": 1,
-                    "tooltip": "共享给下一镜头的 token 数（0 表示关闭，常见范围 1-12）。"
+                    "tooltip": "Number of tokens shared with the next shot (0 disables, typical range 1-12)."
                 }),
             }
         }
@@ -253,18 +253,18 @@ class WanVideoHolocinePromptEncode:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "global_caption": ("STRING", {"default": "", "multiline": True, "tooltip": "整体场景描述，会自动拼接到 [global caption] 段落。"}),
+                "global_caption": ("STRING", {"default": "", "multiline": True, "tooltip": "Overall scene description; appended to the [global caption] section."}),
                 "shot_list": ("WANVID_HOLOCINE_SHOT_LIST",),
                 "negative_prompt": ("STRING", {"default": "", "multiline": True}),
                 "t5": ("WANTEXTENCODER",),
                 "image_embeds": ("WANVIDIMAGE_EMBEDS", {"tooltip": "Image embeds produced by WanVideoEmptyEmbeds (or equivalent) for frame inference."}),
             },
             "optional": {
-                "custom_shot_cut_frames": ("STRING", {"default": "", "tooltip": "可选：自定义镜头切换帧，逗号/空格分隔。留空则按镜头数平均分配。"}),
-                "append_shot_summary": ("BOOLEAN", {"default": True, "tooltip": "自动在全局描述后追加 \"This scene contains N shots.\""}),
+                "custom_shot_cut_frames": ("STRING", {"default": "", "tooltip": "Optional: custom shot cut frames, comma/space separated. If empty, distribute evenly by shot count."}),
+                "append_shot_summary": ("BOOLEAN", {"default": True, "tooltip": "Append \"This scene contains N shots.\" after the global description."}),
                 "force_offload": ("BOOLEAN", {"default": True}),
-                "model_to_offload": ("WANVIDEOMODEL", {"tooltip": "编码前临时卸载模型以释放显存"}),
-                "use_disk_cache": ("BOOLEAN", {"default": False, "tooltip": "启用磁盘缓存时可免加载 T5"}),
+                "model_to_offload": ("WANVIDEOMODEL", {"tooltip": "Temporarily offload the model before encoding to free VRAM."}),
+                "use_disk_cache": ("BOOLEAN", {"default": False, "tooltip": "When disk cache is enabled, skip loading T5."}),
                 "device": (["gpu", "cpu"], {"default": "gpu"}),
             }
         }
