@@ -63,6 +63,17 @@ def offload_model_sd_to_cpu(patcher):
         gc.collect()
 
 
+def model_sd_is_available(model_obj):
+    if isinstance(model_obj, dict):
+        return model_obj.get("sd") is not None
+    if hasattr(model_obj, "pipeline") and isinstance(model_obj.pipeline, dict):
+        return model_obj.pipeline.get("sd") is not None
+    try:
+        return model_obj["sd"] is not None
+    except Exception:
+        return False
+
+
 def prepare_shot_lora_payload(base_model, shot_lora_specs):
     """Load and organize per-shot LoRA adapters for Holocine workflows."""
     if not shot_lora_specs:
@@ -2862,7 +2873,10 @@ class WanVideoSampler:
                 # Always clear per-shot LoRA buffers to avoid VRAM residue on failures.
                 assign_shot_lora_to_transformer(transformer, [])
                 if force_offload and (not model["auto_cpu_offload"] or shot_lora_payload):
-                    hard_offload_transformer(transformer)
+                    if model_sd_is_available(model):
+                        hard_offload_transformer(transformer)
+                    else:
+                        offload_transformer(transformer)
                 if force_offload:
                     offload_model_sd_to_cpu(patcher)
                 raise e
@@ -2892,7 +2906,10 @@ class WanVideoSampler:
         # Always clear per-shot LoRA buffers to avoid VRAM residue.
         assign_shot_lora_to_transformer(transformer, [])
         if force_offload and (not model["auto_cpu_offload"] or shot_lora_payload):
-            hard_offload_transformer(transformer)
+            if model_sd_is_available(model):
+                hard_offload_transformer(transformer)
+            else:
+                offload_transformer(transformer)
         if force_offload:
             offload_model_sd_to_cpu(patcher)
 
