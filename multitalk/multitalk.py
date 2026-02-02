@@ -148,13 +148,13 @@ class AudioProjModel(nn.Module):
     def __init__(
         self,
         seq_len=5,
-        seq_len_vf=12,
-        blocks=12,  
-        channels=768, 
+        seq_len_vf=8,
+        blocks=12,
+        channels=768,
         intermediate_dim=512,
         output_dim=768,
         context_tokens=32,
-        norm_output_audio=False,
+        norm_output_audio=True,
     ):
         super().__init__()
 
@@ -278,9 +278,9 @@ class SingleStreamMultiAttention(SingleStreamAttention):
     def __init__(
         self,
         dim: int,
-        encoder_hidden_states_dim: int,
         num_heads: int,
-        qkv_bias: bool,
+        qkv_bias: bool = True,
+        encoder_hidden_states_dim: int = 768,
         class_range: int = 24,
         class_interval: int = 4,
         attention_mode: str = 'sdpa',

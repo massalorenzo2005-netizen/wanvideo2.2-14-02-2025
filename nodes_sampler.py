@@ -185,11 +185,12 @@ class WanVideoSampler:
 
         is_pusa = "pusa" in sample_scheduler.__class__.__name__.lower()
 
-        scheduler_step_args = {"generator": seed_g}
-        step_sig = inspect.signature(sample_scheduler.step)
-        for arg in list(scheduler_step_args.keys()):
-            if arg not in step_sig.parameters:
-                scheduler_step_args.pop(arg)
+        if scheduler != "multitalk":
+            scheduler_step_args = {"generator": seed_g}
+            step_sig = inspect.signature(sample_scheduler.step)
+            for arg in list(scheduler_step_args.keys()):
+                if arg not in step_sig.parameters:
+                    scheduler_step_args.pop(arg)
 
         # Ovi
         if transformer.audio_model is not None: # temporary workaround (...nothing more permanent)
@@ -225,6 +226,7 @@ class WanVideoSampler:
         #I2V
         story_mem_latents = image_embeds.get("story_mem_latents", None)
         image_cond = image_embeds.get("image_embeds", None)
+        image_cond_mask = None
         if image_cond is not None:
             if transformer.in_dim == 16:
                 raise ValueError("T2V (text to video) model detected, encoded images only work with I2V (Image to video) models")
