@@ -1,20 +1,19 @@
-# Usa l'immagine UFFICIALE e PUBBLICA di RunPod (Corretta)
-FROM runpod/worker-comfyui:latest
+# Usa l'immagine specifica che hai indicato (Ufficiale RunPod 5090)
+FROM runpod/comfyui:latest-5090
 
-# Installiamo git (necessario per risolvere il warning dei log)
+# Installiamo git (fondamentale per collegare i nodi correttamente)
 USER root
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
-# Posizioniamoci nella cartella dei nodi personalizzati
-# L'immagine ufficiale mette ComfyUI in /ComfyUI
+# Cartella dei nodi per l'immagine 5090
+# Posizioniamoci nel tuo fork di Kijai
 WORKDIR /ComfyUI/custom_nodes/ComfyUI-WanVideoWrapper
 
-# Copiamo i file dal tuo repository GitHub (il tuo fork di Kijai)
+# Copiamo i file dal tuo repository
 COPY . .
 
-# Installiamo le dipendenze specifiche dei tuoi nodi
+# Installiamo le dipendenze specifiche (requirements.txt)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Torniamo alla cartella principale per il worker
+# Torniamo alla base per l'avvio del container
 WORKDIR /
-
